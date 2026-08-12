@@ -74,10 +74,8 @@ ls /lib/firmware/rtl_bt >/dev/null 2>&1 \
 # ── 5b. libinput quirk validation — a rejected file silently disables ALL
 #       quirks, so the build FAILS instead of shipping a dead fix. ─────────
 if command -v libinput >/dev/null 2>&1; then
-    if libinput quirks validate /etc/libinput/local-overrides.quirks 2>/dev/null; then
-        log "OK libinput quirk file parses cleanly"
-    elif libinput quirks list /dev/null >/dev/null 2>&1; then
-        log "OK libinput quirk accepted (validate subcommand unavailable)"
+    if libinput quirks validate; then
+        log "OK libinput quirks database validates"
     else
         echo "FATAL: libinput rejected the quirk file" >> "$REPORT"
         exit 1
