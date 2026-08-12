@@ -49,7 +49,7 @@ ls -la "$ROOT/boot/efi/EFI/BOOT/" "$ROOT/boot/efi/EFI/CasperOS/" 2>/dev/null | g
 if find "$ROOT/boot/efi" -iname '*.efi' | grep -qiE 'x64|grubx64'; then
     die "x86_64 EFI binaries found on ESP — 32-bit UEFI would not boot"
 fi
-file "$ROOT/boot/efi/EFI/BOOT/BOOTIA32.EFI" | grep -q 'IA-32' || die "BOOTIA32.EFI is not an IA-32 binary!"
+file "$ROOT/boot/efi/EFI/BOOT/BOOTIA32.EFI" | grep -qiE '80386|IA-32' || die "BOOTIA32.EFI is not an IA-32 binary!"
 ok "ESP verified: only IA-32 (32-bit) EFI bootloader present"
 
 # ── fstab by UUID ──────────────────────────────────────────────────────────

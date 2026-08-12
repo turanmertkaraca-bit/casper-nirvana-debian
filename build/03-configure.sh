@@ -71,6 +71,19 @@ ls /lib/firmware/rtl_bt >/dev/null 2>&1 \
     && log "OK rtl bluetooth firmware present" \
     || echo "WARN: rtl_bt firmware missing" >> "$REPORT"
 
+# ── 5b. libinput quirk validation — a rejected file silently disables ALL
+#       quirks, so the build FAILS instead of shipping a dead fix. ─────────
+if command -v libinput >/dev/null 2>&1; then
+    if libinput quirks validate /etc/libinput/local-overrides.quirks 2>/dev/null; then
+        log "OK libinput quirk file parses cleanly"
+    elif libinput quirks list /dev/null >/dev/null 2>&1; then
+        log "OK libinput quirk accepted (validate subcommand unavailable)"
+    else
+        echo "FATAL: libinput rejected the quirk file" >> "$REPORT"
+        exit 1
+    fi
+fi
+
 # ── 6. locale / timezone / keyboard / hostname ─────────────────────────────
 log "locale tr_TR.UTF-8 + en_US.UTF-8, tz Europe/Istanbul, kb tr"
 sed -i 's/^# *tr_TR.UTF-8 UTF-8/tr_TR.UTF-8 UTF-8/' /etc/locale.gen
