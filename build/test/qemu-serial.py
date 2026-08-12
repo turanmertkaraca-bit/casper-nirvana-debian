@@ -36,14 +36,17 @@ def recv_into():
     return False
 
 def wait_for(pattern, timeout):
-    p = pattern if isinstance(pattern, bytes) else pattern.encode()
+    """Wait for a pattern or list of patterns; returns the matched index."""
+    pats = [pattern] if isinstance(pattern, (str, bytes)) else pattern
+    pats = [p if isinstance(p, bytes) else p.encode() for p in pats]
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if p in buf:
-            return True
+        for i, p in enumerate(pats):
+            if p in buf:
+                return i
         recv_into()
         time.sleep(0.1)
-    return False
+    return None
 
 def send(line):
     s.sendall((line + "\r").encode())
@@ -71,21 +74,25 @@ def run(cmd, timeout=60):
     print(text.strip())
 
 # --- login ---
-ok = wait_for(b"login:", login_timeout)
-if not ok:
+r = wait_for(b"login:", login_timeout)
+if r is None:
     print("FATAL: no login prompt — last serial output:")
     print(buf[-6000:].decode(errors="replace"))
     sys.exit(1)
 send("lvy")
-ok = wait_for(b"Password:", 20)
-if not ok:
-    print("FATAL: no password prompt")
+r = wait_for([b"Password:", b"~$"], 30)
+if r is None:
+    print("FATAL: no password prompt / shell after username — last output:")
+    print(buf[-4000:].decode(errors="replace"))
     sys.exit(1)
-send("")
-ok = wait_for(b"~$", 30)
-if not ok:
-    print("FATAL: login failed")
-    sys.exit(1)
+if r == 0:
+    # password prompt appeared (passwordless account usually skips it)
+    send("")
+    r = wait_for(b"~$", 30)
+    if r is None:
+        print("FATAL: login failed — last output:")
+        print(buf[-4000:].decode(errors="replace"))
+        sys.exit(1)
 print("### LOGIN OK")
 
 with open(cmds_file) as f:
