@@ -85,6 +85,41 @@ screendump() { # port file
     exec 3>&-
 }
 
+# PPM "not all black" check: P6 header + raw RGB, sample mean > 5
+ppm_visible() {
+    python3 - "$1" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    with open(p, "rb") as f:
+        hdr = b""
+        while not hdr.endswith(b"\n"):
+            hdr += f.read(1)
+        parts = hdr.split()
+        if parts[0] != b"P6":
+            sys.exit(1)
+        w, h, maxv = int(parts[1]), int(parts[2]), int(parts[3])
+        data = f.read(w * h * 3)
+    s = 0; n = 0
+    for i in range(0, len(data), 3 * 97):
+        s += data[i] + data[i+1] + data[i+2]; n += 3
+    mean = s / n if n else 0
+    print(f"{p}: {w}x{h} mean={mean:.1f}")
+    sys.exit(0 if mean > 5 else 1)
+except Exception as e:
+    print(f"{p}: error {e}")
+    sys.exit(1)
+PYEOF
+}
+
+# dump diagnostics on boot failure (visible in the CI log without artifacts)
+dump_diag() { # name
+    local name="$1"
+    echo "--- diagnostics for $name ---"
+    echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
+    echo "serial log tail:"; tail -25 "$OUT/serial-$name.log" 2>/dev/null || true
+}
+
 # ── assertion battery (run as lvy over the serial console) ─────────────────
 cat > "$OUT/cmds.txt" <<'CMDS'
 echo ---UNAME
@@ -126,7 +161,7 @@ run_boot() {
     "prep_$name"
     cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
     qemu-system-x86_64 \
-        -enable-kvm -machine pc -m 2048 -cpu host \
+        -enable-kvm -machine q35 -m 2048 -cpu host \
         -drive file="$OUT/test.img",format=raw,if=ide \
         -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
         -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
@@ -141,12 +176,15 @@ run_boot() {
     screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
     python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$OUT/cmds.txt" 900 \
-        > "$OUT/serial-$name.log" 2>&1 || echo "serial driver exited non-zero"
+        > "$OUT/serial-$name.log" 2>&1 || true
 
     screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
     sleep 2
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
+    if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+        dump_diag "$name"
+    fi
     echo "=== boot $name done"
 }
 
@@ -178,7 +216,7 @@ chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK enabled in dconf defaults"
 chk "$(grepq 'enabled-extensions' "$s1")" "extensions list baked in dconf"
 chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (GDM)"
 chk "$(grepq "Casper Splash" "$s1")" "plymouth theme = Casper Splash"
-chk "$([ -s "$OUT/gdm-boot1.ppm" ] && echo 1 || echo 0)" "GDM screenshot captured"
+chk "$(ppm_visible "$OUT/gdm-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 
 echo ""
 echo "══════════════════════ 5.15.165 (fallback kernel) ══════════════════"
@@ -188,7 +226,7 @@ chk "$(grepq '^5\.15' "$s2")" "kernel 5.15.165"
 chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "i2c_designware.disable_pm=1 present"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "i2c_hid.use_polling_mode=1 present"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s2")" "common params still applied"
-chk "$([ -s "$OUT/gdm-boot2.ppm" ] && echo 1 || echo 0)" "GDM screenshot captured"
+chk "$(ppm_visible "$OUT/gdm-boot2.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"

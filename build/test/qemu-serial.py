@@ -59,7 +59,8 @@ def run(cmd, timeout=60):
     buf_before = len(buf)
     send(cmd)
     if not wait_for([b"~$ ", b"~# ", b"~$", b"~#"], timeout):
-        print("### TIMEOUT waiting for prompt")
+        print("### TIMEOUT waiting for prompt; last output:")
+        print(buf[-4000:].decode(errors="replace"))
         return
     # print output since the command echo
     out = buf[buf_before:]
@@ -72,7 +73,8 @@ def run(cmd, timeout=60):
 # --- login ---
 ok = wait_for(b"login:", login_timeout)
 if not ok:
-    print("FATAL: no login prompt")
+    print("FATAL: no login prompt — last serial output:")
+    print(buf[-6000:].decode(errors="replace"))
     sys.exit(1)
 send("lvy")
 ok = wait_for(b"Password:", 20)
