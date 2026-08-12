@@ -1,0 +1,22 @@
+#!/bin/bash
+# CasperOS — first-boot: grow the root partition to fill the eMMC/SD device.
+set -u
+root_dev=$(findmnt -n -o SOURCE /) || exit 0
+case "$root_dev" in
+    /dev/mmcblk*|/dev/nvme*) disk=${root_dev%p*}; part=${root_dev##*p} ;;
+    /dev/sd*|/dev/vd*)       disk=${root_dev%[0-9]*}; part=${root_dev##*[a-z]} ;;
+    *) exit 0 ;;
+esac
+[ -n "${part:-}" ] || exit 0
+
+disk_bytes=$(blockdev --getsize64 "$disk" 2>/dev/null) || exit 0
+part_bytes=$(blockdev --getsize64 "$root_dev" 2>/dev/null) || exit 0
+# already full (or < 64 MiB slack)? nothing to do
+[ $((part_bytes + 67108864)) -lt "$disk_bytes" ] || exit 0
+
+logger "casper-growroot: growing $root_dev on $disk ($part_bytes -> $disk_bytes bytes)"
+parted -s "$disk" resizepart "$part" 100% || logger "casper-growroot: parted failed"
+partprobe "$disk" 2>/dev/null || true
+udevadm settle 2>/dev/null || true
+resize2fs "$root_dev" || logger "casper-growroot: resize2fs failed"
+logger "casper-growroot: done"

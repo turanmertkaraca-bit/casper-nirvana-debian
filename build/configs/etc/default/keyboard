@@ -1,0 +1,6 @@
+# CasperOS — keyboard: Turkish-Q layout system-wide
+XKBMODEL="pc105"
+XKBLAYOUT="tr"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"

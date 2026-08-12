@@ -1,0 +1,13 @@
+[Unit]
+Description=CasperOS Touchscreen Watchdog (journal stream)
+After=systemd-journald.service graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/touchscreen-watchdog
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=graphical.target

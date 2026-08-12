@@ -1,0 +1,2 @@
+# CasperOS — user lvy: passwordless sudo (personal tablet; no password set)
+lvy ALL=(ALL) NOPASSWD: ALL

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Casper Splash
+Description=CasperOS boot animation for Casper Nirvana N220
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/casper-splash
+ScriptFile=/usr/share/plymouth/themes/casper-splash/casper-splash.script

@@ -1,0 +1,88 @@
+name: casperos-build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install host build tools
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            mmdebstrap debootstrap debian-archive-keyring \
+            parted dosfstools e2fsprogs xz-utils curl ca-certificates \
+            qemu-system-x86 qemu-utils ovmf
+          sudo ln -sf sid /usr/share/debootstrap/scripts/trixie 2>/dev/null || true
+
+      - name: Build the CasperOS image
+        run: |
+          sudo bash build/build-image.sh \
+            --root /tmp/casper-root \
+            --img /tmp/casper-n220.img \
+            --size 6G
+        timeout-minutes: 150
+
+      - name: KVM boot smoke test (both kernels)
+        run: |
+          sudo bash build/test/smoke-test.sh \
+            --img /tmp/casper-n220.img \
+            --out /tmp/casper-test
+        timeout-minutes: 45
+
+      - name: Run summary
+        run: |
+          echo "## CasperOS build summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f /tmp/casper-build-report.txt ]; then
+            cat /tmp/casper-build-report.txt >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "Image: $(numfmt --to=iec-i $(stat -c %s /tmp/casper-n220.img))" >> "$GITHUB_STEP_SUMMARY"
+          echo "Logs and screenshots in the artifacts." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Compress and split for distribution
+        run: |
+          cd /tmp
+          xz -6eT0 -c casper-n220.img > casper-n220.img.xz
+          split -b 1900M -d -a 2 casper-n220.img.xz casper-n220.img.xz.
+          ls -la casper-n220.img.xz.*
+          sha256sum casper-n220.img.xz.* > casper-n220.img.xz.sha256
+          cat casper-n220.img.xz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: casper-n220-img
+          path: |
+            /tmp/casper-n220.img.xz.*
+            /tmp/casper-n220.img.xz.sha256
+            /tmp/casper-test/serial-boot1.log
+            /tmp/casper-test/serial-boot2.log
+            /tmp/casper-test/gdm-boot1.ppm
+            /tmp/casper-test/gdm-boot2.ppm
+            /tmp/casper-test/early-boot1.ppm
+            /tmp/casper-build-report.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd /tmp
+          gh release create "${{ github.ref_name }}" \
+            casper-n220.img.xz.* casper-n220.img.xz.sha256 \
+            --title "CasperOS ${{ github.ref_name }}" \
+            --notes "CasperOS image for Casper Nirvana N220/N240. See README for flashing. \
+            Split parts: download all casper-n220.img.xz.XX parts + sha256, then:
+            \`cat casper-n220.img.xz.* | xz -dc > casper-n220.img\`" \
+            || true

@@ -1,0 +1,3 @@
+# CasperOS — earlyoom: kill the hog before the 2 GB UI freezes.
+# Prefer killing the browser (biggest memory consumer), NEVER the desktop.
+EARLYOOM_ARGS="-r 120 -m 8 -s 8 --prefer '(^|/)(firefox-esr|firefox|chrome|chromium|mpv)' --avoid '(^|/)(gnome-shell|mutter|gdm|Xorg|xwayland|systemd)'"

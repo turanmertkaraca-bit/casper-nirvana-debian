@@ -1,0 +1,33 @@
+# CasperOS boot animation — dark background, centered spinner, brand label.
+# API verified against plymouth 24.004.60 shipped script theme.
+
+Window.SetBackgroundTopColor(0.01, 0.01, 0.02);
+Window.SetBackgroundBottomColor(0.03, 0.03, 0.05);
+
+bg.image = Image("background.png");
+bg.sprite = Sprite(bg.image);
+bg.sprite.SetX(0);
+bg.sprite.SetY(0);
+
+title.image = Image.Text("CASPER NIRVANA", 0.93, 0.93, 1.0, 1.0);
+title.sprite = Sprite(title.image);
+title.sprite.SetX(Window.GetWidth() / 2 - title.image.GetWidth() / 2);
+title.sprite.SetY(Window.GetHeight() / 2 - 140);
+
+sub.image = Image.Text("N220", 0.5, 0.55, 0.65, 1.0);
+sub.sprite = Sprite(sub.image);
+sub.sprite.SetX(Window.GetWidth() / 2 - sub.image.GetWidth() / 2);
+sub.sprite.SetY(Window.GetHeight() / 2 - 60);
+
+spinner.image = Image("spinner-1.png");
+spinner.sprite = Sprite(spinner.image);
+spinner.sprite.SetX(Window.GetWidth() / 2 - spinner.image.GetWidth() / 2);
+spinner.sprite.SetY(Window.GetHeight() / 2 - spinner.image.GetHeight() / 2 + 120);
+
+fun anim (i) {
+    spinner.sprite.SetImage(Image("spinner-" + i + ".png"));
+    i++;
+    if (i > 7) i = 1;
+    anim_callback = Callback.OnAnimation(anim, 100);
+}
+anim_callback = Callback.OnAnimation(anim, 1);

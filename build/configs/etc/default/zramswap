@@ -1,0 +1,6 @@
+# CasperOS — zram swap config (zram-tools)
+# lz4  = fastest decompression on Atom (zstd compresses better but is slower)
+# SIZE = MB of *uncompressed* swap presented to the kernel
+ALGO=lz4
+SIZE=1536
+PRIORITY=100

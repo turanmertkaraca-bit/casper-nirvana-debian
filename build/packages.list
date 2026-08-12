@@ -1,0 +1,137 @@
+# CasperOS — Debian 13 trixie package set (amd64).
+# Hand-picked GNOME + apps. Install-Recommends is off system-wide.
+
+# ── base system ────────────────────────────────────────────────────────────
+systemd
+systemd-sysv
+udev
+kmod
+procps
+iproute2
+util-linux
+e2fsprogs
+mount
+adduser
+passwd
+login
+bash
+coreutils
+debconf
+findutils
+grep
+sed
+gawk
+gzip
+tar
+diffutils
+hostname
+ncurses-base
+ncurses-bin
+perl-base
+dpkg
+apt
+locales
+tzdata
+ca-certificates
+sudo
+usbutils
+pciutils
+curl
+wget
+unzip
+nano
+less
+console-setup
+keyboard-configuration
+efibootmgr
+systemd-timesyncd
+
+# ── kernel (Debian 6.12 default) ───────────────────────────────────────────
+linux-image-amd64
+
+# ── bootloader: 32-bit UEFI is MANDATORY for Bay Trail (32-bit firmware) ──
+grub-efi-ia32-bin
+grub2-common
+initramfs-tools
+plymouth
+plymouth-themes
+
+# ── firmware (non-free-firmware) ───────────────────────────────────────────
+firmware-realtek
+firmware-intel-sound
+firmware-misc-nonfree
+intel-microcode
+
+# ── GNOME desktop (hand-picked, no metapackages) ───────────────────────────
+gnome-shell
+gnome-session
+gnome-settings-daemon
+gnome-control-center
+gdm3
+polkitd
+dconf-cli
+dconf-gsettings-backend
+gsettings-desktop-schemas
+nautilus
+gvfs
+gvfs-backends
+udisks2
+gnome-console
+gnome-text-editor
+gnome-keyring
+network-manager
+network-manager-gnome
+iio-sensor-proxy
+xdg-desktop-portal
+xdg-desktop-portal-gnome
+xdg-desktop-portal-gtk
+xdg-user-dirs
+adwaita-icon-theme
+fonts-cantarell
+fonts-dejavu-core
+ibus
+ibus-gtk3
+ibus-gtk4
+power-profiles-daemon
+xwayland
+xserver-xorg-input-libinput
+
+# ── touch / input tooling ──────────────────────────────────────────────────
+libinput-tools
+iw
+
+# ── audio (PipeWire + WirePlumber, Bay Trail SST) ──────────────────────────
+pipewire
+pipewire-pulse
+pipewire-audio-client-libraries
+wireplumber
+libspa-0.2-bluetooth
+gstreamer1.0-pipewire
+gstreamer1.0-pulseaudio
+alsa-utils
+alsa-ucm-conf
+
+# ── performance on 2 GB RAM ────────────────────────────────────────────────
+earlyoom
+zram-tools
+
+# ── video acceleration (legacy i965 driver = Bay Trail correct one) ───────
+vainfo
+i965-va-driver
+libva2
+mesa-va-drivers
+libgl1-mesa-dri
+
+# ── apps ───────────────────────────────────────────────────────────────────
+firefox-esr
+mpv
+wine
+wine64
+winetricks
+winbind
+
+# ── GNOME shell extensions (pre-enabled via dconf) ─────────────────────────
+gnome-shell-extension-manager
+gnome-shell-extension-appindicator
+gnome-shell-extension-desktop-icons-ng
+gnome-shell-extension-caffeine

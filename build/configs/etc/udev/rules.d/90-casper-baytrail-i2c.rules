@@ -1,0 +1,9 @@
+# CasperOS — Bay Trail I2C power management.
+# Prevents the LPSS I2C controller from sleeping — the root cause of
+# touchscreen freezes (the touch controller hangs off this bus).
+ACTION=="add", SUBSYSTEM=="i2c",   ATTR{power/control}="on"
+ACTION=="add", DRIVERS=="i2c_hid", ATTR{power/control}="on", ATTR{power/autosuspend_delay_ms}="-1"
+ACTION=="add", DRIVERS=="i2c_hid_acpi", ATTR{power/control}="on", ATTR{power/autosuspend_delay_ms}="-1"
+ACTION=="add", SUBSYSTEM=="input", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="hid",   ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb",   DRIVER=="usbhid", ATTR{power/autosuspend}="-1"

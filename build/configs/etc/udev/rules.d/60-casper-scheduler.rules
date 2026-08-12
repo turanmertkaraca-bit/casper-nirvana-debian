@@ -1,0 +1,6 @@
+# CasperOS — BFQ I/O scheduler for the slow eMMC.
+# Prevents one IO-heavy process from starving interactive apps.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", KERNEL=="sd[a-z]",       ATTR{queue/scheduler}="bfq"
+# IO queue depth for eMMC
+ACTION=="add|change", KERNEL=="mmcblk[0-9]*", ATTR{queue/nr_requests}="128"

@@ -1,0 +1,13 @@
+[Unit]
+Description=CasperOS first-boot root partition resize
+DefaultDependencies=no
+After=local-fs.target
+Before=systemd-user-sessions.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/casper-growroot
+
+[Install]
+WantedBy=multi-user.target

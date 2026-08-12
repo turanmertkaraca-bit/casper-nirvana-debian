@@ -1,0 +1,13 @@
+#!/bin/bash
+# CasperOS — streams the kernel journal; auto-resets the touchscreen on
+# I2C errors. 15 s cooldown prevents reset storms.
+last=0
+journalctl -kf -o cat --since now 2>/dev/null | \
+grep --line-buffered -Ei 'i2c_hid.*(error|failed|reset)|i2c.*timeout|incomplete report|(silead|goodix).*(error|failed)' | \
+while read -r _line; do
+    now=$(date +%s)
+    if [ $((now - last)) -ge 15 ]; then
+        last=$now
+        /usr/local/bin/touchscreen-reset
+    fi
+done

@@ -1,0 +1,11 @@
+[Unit]
+Description=CasperOS UEFI NVRAM boot entry repair (32-bit firmware)
+After=local-fs.target
+ConditionPathExists=!/var/lib/casper-nvram.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/casper-nvram
+
+[Install]
+WantedBy=multi-user.target

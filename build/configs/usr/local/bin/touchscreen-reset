@@ -1,0 +1,18 @@
+#!/bin/bash
+# CasperOS — rebind the touchscreen's I2C driver to recover from a freeze.
+# Real sysfs driver names (i2c_hid_acpi on modern kernels — the old
+# "i2c_hid" / "silead" / "goodix" names match nothing and do nothing).
+logger "casper-touch: resetting touchscreen"
+for drv in i2c_hid_acpi i2c_hid Goodix-TS silead_ts; do
+    d="/sys/bus/i2c/drivers/${drv}"
+    [ -d "$d" ] || continue
+    for dev in "$d"/*-*; do
+        [ -L "$dev" ] || continue
+        n=$(basename "$dev")
+        logger "casper-touch: rebinding $n on $drv"
+        echo "$n" > "$d/unbind" 2>/dev/null || true
+        sleep 0.3
+        echo "$n" > "$d/bind" 2>/dev/null || true
+    done
+done
+logger "casper-touch: reset done"

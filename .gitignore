@@ -1,0 +1,9 @@
+# Build outputs
+*.img
+*.img.xz
+*.img.xz.*
+*.sha256
+*.ppm
+*.log
+/build-work/
+/build-out/

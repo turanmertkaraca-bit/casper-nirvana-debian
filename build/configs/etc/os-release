@@ -1,0 +1,10 @@
+PRETTY_NAME="Casper Nirvana OS 1.0"
+NAME="Casper Nirvana OS"
+VERSION_ID="1.0"
+VERSION="1.0 (trixie)"
+ID=casperos
+ID_LIKE=debian
+VERSION_CODENAME=trixie
+HOME_URL=""
+SUPPORT_URL=""
+BUG_REPORT_URL=""
