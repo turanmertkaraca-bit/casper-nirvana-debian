@@ -58,17 +58,15 @@ def drain():
             time.sleep(0.1)
 
 def run(cmd, timeout=60):
+    global buf
     print(f"### CMD: {cmd}")
-    buf_before = len(buf)
+    buf = b""  # clear stale prompt so wait_for matches only NEW output
     send(cmd)
     if not wait_for([b"~$ ", b"~# ", b"~$", b"~#"], timeout):
         print("### TIMEOUT waiting for prompt; last output:")
         print(buf[-4000:].decode(errors="replace"))
         return
-    # print output since the command echo
-    out = buf[buf_before:]
-    text = out.decode(errors="replace")
-    # strip the echoed command itself
+    text = buf.decode(errors="replace")
     if text.startswith(cmd):
         text = text[len(cmd):]
     print(text.strip())

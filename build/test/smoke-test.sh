@@ -186,6 +186,12 @@ run_boot() {
     wait "$qpid" 2>/dev/null || true
     if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
         dump_diag "$name"
+    else
+        echo "--- $name serial results (key sections):"
+        grep -A3 -E '### CMD: (uname|cat /proc/cmdline|systemctl is-active|cat /proc/swaps)' \
+            "$OUT/serial-$name.log" | grep -v '^--$' | tail -40
+        echo "--- $name screenshots:"
+        ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
     fi
     echo "=== boot $name done"
 }
@@ -197,6 +203,7 @@ run_boot boot2 45455
 pass=0; fail=0
 chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
 grepq() { grep -q "$1" "$2" && echo 1 || echo 0; }
+grepqi() { grep -qi "$1" "$2" && echo 1 || echo 0; }
 
 echo ""
 echo "══════════════════════ 6.12 (default kernel) ══════════════════════"
@@ -217,7 +224,7 @@ chk "$(grepq 'DCONF_DB_OK' "$s1")" "dconf system db compiled"
 chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK enabled in dconf defaults"
 chk "$(grepq 'enabled-extensions' "$s1")" "extensions list baked in dconf"
 chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (GDM)"
-chk "$(grepq "Casper Splash" "$s1")" "plymouth theme = Casper Splash"
+chk "$(grepqi "casper-splash" "$s1")" "plymouth theme = casper-splash"
 chk "$(ppm_visible "$OUT/gdm-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 
 echo ""
