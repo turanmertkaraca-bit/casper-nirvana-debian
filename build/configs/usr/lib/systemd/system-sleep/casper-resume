@@ -1,0 +1,12 @@
+#!/bin/sh
+# CasperOS systemd-sleep hook: $1 = pre|post, $2 = suspend|hibernate|...
+# Classic Bay Trail bug: touchscreen (and Wi-Fi) dead after suspend.
+[ "$1" = "post" ] || exit 0
+sleep 2
+[ -x /usr/local/bin/touchscreen-reset ] && /usr/local/bin/touchscreen-reset
+if command -v iw >/dev/null 2>&1; then
+    for w in $(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}'); do
+        iw dev "$w" set power_save off 2>/dev/null || true
+    done
+fi
+exit 0

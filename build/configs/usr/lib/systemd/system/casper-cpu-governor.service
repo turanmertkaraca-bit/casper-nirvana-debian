@@ -1,0 +1,11 @@
+[Unit]
+Description=CasperOS CPU governor (schedutil)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/casper-set-governor
+
+[Install]
+WantedBy=multi-user.target
