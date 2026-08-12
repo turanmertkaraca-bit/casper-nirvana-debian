@@ -59,6 +59,7 @@ jobs:
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: casper-n220-img
           path: |
@@ -66,11 +67,14 @@ jobs:
             /tmp/casper-n220.img.xz.sha256
             /tmp/casper-test/serial-boot1.log
             /tmp/casper-test/serial-boot2.log
+            /tmp/casper-test/selftest-boot1.log
+            /tmp/casper-test/selftest-boot2.log
+            /tmp/casper-test/early-boot1.ppm
+            /tmp/casper-test/early-boot2.ppm
             /tmp/casper-test/gdm-boot1.ppm
             /tmp/casper-test/gdm-boot2.ppm
-            /tmp/casper-test/early-boot1.ppm
             /tmp/casper-build-report.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Publish GitHub Release (on tag)

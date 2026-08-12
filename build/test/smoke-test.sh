@@ -143,6 +143,9 @@ prep_boot2() {
     {
         echo 'set timeout=0'
         echo 'set default=0'
+        echo 'serial --speed=115200 --unit=0'
+        echo 'terminal_input serial'
+        echo 'terminal_output serial'
         echo "menuentry 'CasperOS 5.15 test' {"
         echo '    insmod part_gpt'
         echo '    insmod ext2'
@@ -250,11 +253,8 @@ run_boot() {
     collect_selftest "$name"
     echo "--- $name selftest output:"
     cat "$OUT/selftest-$name.log"
-    echo "--- $name serial diagnostics:"
-    grep -E 'FATAL|LOGIN OK|SELFTEST LAUNCHED' "$OUT/serial-$name.log" || true
-    if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
-        echo "serial tail:"; tail -12 "$OUT/serial-$name.log" 2>/dev/null || true
-    fi
+    echo "--- $name serial tail:"
+    tail -15 "$OUT/serial-$name.log" 2>/dev/null || true
     echo "--- $name screenshots:"
     ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
     ppm_visible "$OUT/early-$name.ppm" 2>/dev/null || true
