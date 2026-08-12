@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # CasperOS KVM boot smoke test — boots the finished image under QEMU/KVM with
 # 32-bit OVMF firmware (exactly what the tablet has), verifies the default
-# (6.12) AND fallback (5.15) kernels reach the graphical target, runs an
-# assertion battery over the serial console, and captures screenshots.
+# (6.12) kernel via GRUB and the fallback (5.15) kernel via direct boot with
+# the exact cmdline GRUB would pass, runs an assertion battery over the
+# serial console, and captures screenshots.
 #
 # Usage: smoke-test.sh --img <file.img> --out <dir>
 set -euo pipefail
@@ -20,8 +21,6 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 cp --sparse=always "$IMG" "$OUT/test.img"
 
 # ── 32-bit OVMF firmware (Bay Trail = IA32 UEFI) ───────────────────────────
-# Debian 13's edk2 no longer builds IA32; bookworm's ovmf-ia32 does.
-# Search order: installed copies → Debian bookworm pool (pinned URL).
 FCODE=""; FVARS=""
 for f in /usr/share/OVMF/OVMF_CODE.ia32.fd /usr/share/OVMF/OVMF32_CODE_4M.secboot.fd; do
     [ -f "$f" ] && FCODE="$f"
@@ -42,6 +41,7 @@ fi
 echo "firmware: $FCODE + $FVARS"
 
 # ── test.img manipulation (loop-mount the root partition) ──────────────────
+LOOP=""
 mnt_test_img() {
     LOOP=$(losetup -f)
     losetup -P "$LOOP" "$OUT/test.img"
@@ -51,6 +51,68 @@ mnt_test_img() {
 umnt_test() {
     umount "$OUT/mnt" 2>/dev/null || true
     losetup -d "$LOOP" 2>/dev/null || true
+}
+
+screendump() { # port file
+    exec 3<>/dev/tcp/127.0.0.1/"$1" 2>/dev/null || return 1
+    echo "screendump $2" >&3
+    sleep 1
+    exec 3>&-
+}
+
+# PPM check: report size + mean brightness; exit 0 if it shows content
+ppm_visible() {
+    python3 - "$1" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    with open(p, "rb") as f:
+        hdr = b""
+        while True:
+            c = f.read(1)
+            if not c:
+                break
+            hdr += c
+            if hdr.endswith(b"\n") and hdr.count(b"\n") == 3:
+                break
+        parts = [t for t in hdr.split() if t not in (b"",) and not t.startswith(b"#")]
+        w, h = int(parts[1]), int(parts[2])
+        data = f.read(w * h * 3)
+    s = 0; n = 0
+    for i in range(0, len(data), 3 * 131):
+        s += data[i] + data[i+1] + data[i+2]; n += 3
+    mean = s / n if n else 0
+    print(f"{p}: {w}x{h} mean={mean:.1f}")
+    sys.exit(0 if mean > 5 else 1)
+except Exception as e:
+    print(f"{p}: error {e}")
+    sys.exit(1)
+PYEOF
+}
+
+# ── static grub.cfg assertions on the actual image ─────────────────────────
+static_checks() {
+    mnt_test_img
+    local cfg="$OUT/mnt/boot/grub/grub.cfg"
+    {
+        if grep -q 'vmlinuz-5\.15.*i2c_designware.disable_pm=1' "$cfg"; then
+            echo "STATIC_OK 5.15 entry carries legacy I2C params"
+        else
+            echo "STATIC_FAIL 5.15 entry missing legacy I2C params"
+        fi
+        if grep -q 'vmlinuz-6\.' "$cfg" && ! grep -q 'vmlinuz-6\..*i2c_designware' "$cfg"; then
+            echo "STATIC_OK 6.12 entry has no legacy I2C params"
+        else
+            echo "STATIC_FAIL 6.12 entry wrongly carries legacy I2C params"
+        fi
+        if grep -q 'gnulinux-5\.15' "$cfg"; then
+            echo "STATIC_OK 5.15 GRUB entry present"
+        else
+            echo "STATIC_FAIL no 5.15 GRUB entry"
+        fi
+    } > "$OUT/static-results.txt"
+    cat "$OUT/static-results.txt"
+    umnt_test
 }
 
 # boot 1 (default): append console=ttyS0 to the 6.12 entry
@@ -63,65 +125,31 @@ prep_boot1() {
     umnt_test
 }
 
-# boot 2 (fallback): point GRUB at the 5.15 entry + console
+# boot 2 (fallback): extract the 5.15 kernel + its EXACT postprocessed
+# cmdline from grub.cfg, and stage them for a direct qemu kernel boot
 prep_boot2() {
     mnt_test_img
-    local id
-    id=$(grep -oE 'gnulinux-5\.15[^'"'"']*' "$OUT/mnt/boot/grub/grub.cfg" | head -1)
-    [ -n "$id" ] || { echo "FATAL: no 5.15 grub entry"; umnt_test; exit 1; }
-    echo "5.15 entry id: $id"
-    sed -i 's/^set default=.*/set default="'"$id"'"/' "$OUT/mnt/boot/grub/grub.cfg"
-    awk '
-        { if (!done && $0 ~ /linux[ \t]+\/boot\/vmlinuz-5\./ && $0 !~ /console=ttyS0/) { print $0 " console=ttyS0,115200"; done=1; next } print }
-    ' "$OUT/mnt/boot/grub/grub.cfg" > "$OUT/mnt/boot/grub/grub.cfg.new"
-    mv "$OUT/mnt/boot/grub/grub.cfg.new" "$OUT/mnt/boot/grub/grub.cfg"
+    local line
+    line=$(awk '/linux[ \t]+\/boot\/vmlinuz-5\.15/ {print; exit}' "$OUT/mnt/boot/grub/grub.cfg")
+    [ -n "$line" ] || { echo "FATAL: no 5.15 linux line in grub.cfg"; umnt_test; exit 1; }
+    echo "$line" | grep -q 'i2c_designware.disable_pm=1' \
+        || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
+    # cmdline = everything from the first root= field onward
+    echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)) " console=ttyS0,115200"; exit }}' \
+        > "$OUT/k515.cmdline"
+    cp -a "$OUT/mnt/boot/vmlinuz-5.15"* "$OUT/" 2>/dev/null || true
+    cp -a "$OUT/mnt/boot/initrd.img-5.15"* "$OUT/" 2>/dev/null || true
+    K515_VMLINUZ=$(ls "$OUT"/vmlinuz-5.15* | head -1)
+    K515_INITRD=$(ls "$OUT"/initrd.img-5.15* | head -1)
+    [ -n "${K515_VMLINUZ:-}" ] || { echo "FATAL: 5.15 kernel not found in /boot"; umnt_test; exit 1; }
     umnt_test
+    echo "5.15 kernel: $K515_VMLINUZ"
+    echo "5.15 cmdline: $(cat "$OUT/k515.cmdline")"
 }
 
-screendump() { # port file
-    exec 3<>/dev/tcp/127.0.0.1/"$1" 2>/dev/null || return 1
-    echo "screendump $2" >&3
-    sleep 1
-    exec 3>&-
-}
-
-# PPM "not all black" check: P6 header + raw RGB, sample mean > 5
-ppm_visible() {
-    python3 - "$1" <<'PYEOF'
-import sys
-p = sys.argv[1]
-try:
-    with open(p, "rb") as f:
-        hdr = b""
-        while not hdr.endswith(b"\n"):
-            hdr += f.read(1)
-        parts = hdr.split()
-        if parts[0] != b"P6":
-            sys.exit(1)
-        w, h, maxv = int(parts[1]), int(parts[2]), int(parts[3])
-        data = f.read(w * h * 3)
-    s = 0; n = 0
-    for i in range(0, len(data), 3 * 97):
-        s += data[i] + data[i+1] + data[i+2]; n += 3
-    mean = s / n if n else 0
-    print(f"{p}: {w}x{h} mean={mean:.1f}")
-    sys.exit(0 if mean > 5 else 1)
-except Exception as e:
-    print(f"{p}: error {e}")
-    sys.exit(1)
-PYEOF
-}
-
-# dump diagnostics on boot failure (visible in the CI log without artifacts)
-dump_diag() { # name
-    local name="$1"
-    echo "--- diagnostics for $name ---"
-    echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
-    echo "serial log tail:"; tail -25 "$OUT/serial-$name.log" 2>/dev/null || true
-}
-
-# ── assertion battery (run as lvy over the serial console) ─────────────────
-cat > "$OUT/cmds.txt" <<'CMDS'
+# ── assertion battery (run as lvy over serial via bash -s) ─────────────────
+cat > "$OUT/selftest.sh" <<'SELFTEST'
+echo ===SELFTEST-START===
 echo ---UNAME
 uname -r
 echo ---CMDLINE
@@ -129,15 +157,16 @@ cat /proc/cmdline
 echo ---EFI
 ls /sys/firmware/efi >/dev/null 2>&1 && echo UEFI_OK || echo UEFI_MISSING
 echo ---SERVICES
-for s in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor power-profiles-daemon; do systemctl is-active $s 2>/dev/null | xargs echo "svc $s ="; done
+for s in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor power-profiles-daemon; do
+    echo "svc $s = $(systemctl is-active $s 2>/dev/null)"
+done
 echo ---SWAP
 cat /proc/swaps
 echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo ---DCONF
-ls /etc/dconf/db/local 2>/dev/null && echo DCONF_DB_OK
+ls /etc/dconf/db/local >/dev/null 2>&1 && echo DCONF_DB_OK
 grep -c screen-keyboard-enabled /etc/dconf/db/local.d/00-casper-desktop
-grep -c enabled-extensions /etc/dconf/db/local.d/10-casper-extensions
 cat /etc/dconf/db/local.d/10-casper-extensions
 ls /var/lib/gdm3/.config/monitors.xml /home/lvy/.config/monitors.xml 2>/dev/null
 grep -c '<rotation>right</rotation>' /var/lib/gdm3/.config/monitors.xml
@@ -148,23 +177,28 @@ ls /boot/vmlinuz-* /boot/initrd.img-*
 ls /boot/grub/i386-efi >/dev/null 2>&1 && echo GRUB_IA32_OK || echo GRUB_IA32_MISSING
 find /boot/efi -name '*.efi' | head -5
 file /boot/efi/EFI/BOOT/BOOTIA32.EFI 2>/dev/null || true
-echo ---JOURNAL_ERR
-journalctl --no-pager -p err -b --no-hostname | tail -10
 echo ---GOV_JOURNAL
-journalctl -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -6
+journalctl -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -5
+echo ---JOURNAL_ERR
+journalctl --no-pager -p err -b --no-hostname | tail -8
 echo ---ANALYZE
 systemd-analyze time | tail -1
-CMDS
+echo ===SELFTEST-END===
+SELFTEST
 
 # ── boot one configuration ─────────────────────────────────────────────────
 run_boot() {
-    local name="$1" monport="$2"
+    local name="$1" monport="$2" kernel_args=()
     echo "=== boot: $name ==="
     "prep_$name"
+    if [ "$name" = "boot2" ]; then
+        kernel_args=(-kernel "$K515_VMLINUZ" -initrd "$K515_INITRD" -append "$(cat "$OUT/k515.cmdline")")
+    fi
     cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
     qemu-system-x86_64 \
         -enable-kvm -machine q35 -m 2048 -cpu host \
         -drive file="$OUT/test.img",format=raw,if=ide \
+        "${kernel_args[@]}" \
         -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
         -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
         -chardev socket,id=ser,path="$OUT/ser-$name.sock",server=on,wait=off \
@@ -177,7 +211,7 @@ run_boot() {
     sleep 15
     screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
-    python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$OUT/cmds.txt" 900 \
+    python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$OUT/selftest.sh" 900 \
         > "$OUT/serial-$name.log" 2>&1 || true
 
     screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
@@ -185,17 +219,16 @@ run_boot() {
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
     if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
-        dump_diag "$name"
-    else
-        echo "--- $name serial results (key sections):"
-        grep -A3 -E '### CMD: (uname|cat /proc/cmdline|systemctl is-active|cat /proc/swaps)' \
-            "$OUT/serial-$name.log" | grep -v '^--$' | tail -40
-        echo "--- $name screenshots:"
-        ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
+        echo "--- diagnostics for $name ---"
+        echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
+        echo "serial log tail:"; tail -25 "$OUT/serial-$name.log" 2>/dev/null || true
     fi
+    echo "--- $name screenshots:"
+    ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
     echo "=== boot $name done"
 }
 
+static_checks
 run_boot boot1 45454
 run_boot boot2 45455
 
@@ -206,7 +239,13 @@ grepq() { grep -q "$1" "$2" && echo 1 || echo 0; }
 grepqi() { grep -qi "$1" "$2" && echo 1 || echo 0; }
 
 echo ""
-echo "══════════════════════ 6.12 (default kernel) ══════════════════════"
+echo "══════════════════════ static grub.cfg checks ══════════════════════"
+chk "$(grepq 'STATIC_OK 5.15 entry carries' "$OUT/static-results.txt")" "5.15 GRUB entry has legacy I2C params"
+chk "$(grepq 'STATIC_OK 6.12 entry has no' "$OUT/static-results.txt")" "6.12 GRUB entry clean of legacy params"
+chk "$(grepq 'STATIC_OK 5.15 GRUB entry present' "$OUT/static-results.txt")" "5.15 GRUB entry exists"
+
+echo ""
+echo "══════════════════════ 6.12 (default kernel, via GRUB) ═════════════"
 s1="$OUT/serial-boot1.log"
 chk "$(grepq '### LOGIN OK' "$s1")" "login on serial console"
 chk "$(grepq 'UEFI_OK' "$s1")" "booted via (32-bit OVMF) UEFI"
@@ -215,7 +254,7 @@ chk "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
 chk "$(grepq 'BOOTIA32.EFI' "$s1")" "BOOTIA32.EFI on ESP"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s1")" "intel_idle.max_cstate=1 in cmdline"
 chk "$(grepq 'mitigations=off' "$s1")" "mitigations=off in cmdline"
-chk "$(grepq 'i2c_designware.disable_pm' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
+chk "$(grepq 'i2c_designware' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
 chk "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
@@ -224,16 +263,16 @@ chk "$(grepq 'DCONF_DB_OK' "$s1")" "dconf system db compiled"
 chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK enabled in dconf defaults"
 chk "$(grepq 'enabled-extensions' "$s1")" "extensions list baked in dconf"
 chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (GDM)"
-chk "$(grepqi "casper-splash" "$s1")" "plymouth theme = casper-splash"
+chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 chk "$(ppm_visible "$OUT/gdm-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 
 echo ""
-echo "══════════════════════ 5.15.165 (fallback kernel) ══════════════════"
+echo "══════════════════════ 5.15.165 (fallback kernel, direct boot) ═══════"
 s2="$OUT/serial-boot2.log"
 chk "$(grepq '### LOGIN OK' "$s2")" "login on serial console"
 chk "$(grepq '^5\.15' "$s2")" "kernel 5.15.165"
-chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "i2c_designware.disable_pm=1 present"
-chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "i2c_hid.use_polling_mode=1 present"
+chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "legacy I2C params in cmdline"
+chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "polling mode param in cmdline"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s2")" "common params still applied"
 chk "$(ppm_visible "$OUT/gdm-boot2.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Drive the QEMU serial console: log in as lvy (no password), run commands,
-and print the results. Used by smoke-test.sh.
+"""Drive the QEMU serial console: log in as lvy (null password), then run a
+command script via `bash -s` (non-interactive — no readline/prompt races)
+and print the output between START/END markers.
 
-Usage: qemu-serial.py <unix-sock> <cmds-file> [login-timeout-s]
+Usage: qemu-serial.py <unix-sock> <script-file> [login-timeout-s]
 """
 import socket, sys, time
 
-sock_path, cmds_file = sys.argv[1], sys.argv[2]
+sock_path, script_file = sys.argv[1], sys.argv[2]
 login_timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 600
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -29,14 +30,13 @@ def recv_into():
     try:
         d = s.recv(8192)
         if d:
-            buf = (buf + d)[-200000:]
+            buf = (buf + d)[-300000:]
             return True
     except socket.timeout:
         pass
     return False
 
 def wait_for(pattern, timeout):
-    """Wait for a pattern or list of patterns; returns the matched index."""
     pats = [pattern] if isinstance(pattern, (str, bytes)) else pattern
     pats = [p if isinstance(p, bytes) else p.encode() for p in pats]
     deadline = time.time() + timeout
@@ -51,27 +51,13 @@ def wait_for(pattern, timeout):
 def send(line):
     s.sendall((line + "\r").encode())
 
-def drain():
-    deadline = time.time() + 1.5
+def drain(secs=1.0):
+    deadline = time.time() + secs
     while time.time() < deadline:
         if not recv_into():
             time.sleep(0.1)
 
-def run(cmd, timeout=60):
-    global buf
-    print(f"### CMD: {cmd}")
-    buf = b""  # clear stale prompt so wait_for matches only NEW output
-    send(cmd)
-    if not wait_for([b"~$ ", b"~# ", b"~$", b"~#"], timeout):
-        print("### TIMEOUT waiting for prompt; last output:")
-        print(buf[-4000:].decode(errors="replace"))
-        return
-    text = buf.decode(errors="replace")
-    if text.startswith(cmd):
-        text = text[len(cmd):]
-    print(text.strip())
-
-# --- login ---
+# --- login (interactive; works: login/Parola prompts are readline-free) ---
 r = wait_for(b"login:", login_timeout)
 if r is None:
     print("FATAL: no login prompt — last serial output:")
@@ -84,7 +70,6 @@ if r is None:
     print(buf[-4000:].decode(errors="replace"))
     sys.exit(1)
 if r in (0, 1):
-    # password prompt appeared (passwordless account usually skips it)
     send("")
     r = wait_for(b"~$", 30)
     if r is None:
@@ -93,11 +78,30 @@ if r in (0, 1):
         sys.exit(1)
 print("### LOGIN OK")
 
-with open(cmds_file) as f:
-    for line in f:
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        run(line)
+# --- run the script non-interactively (bash -s reads stdin until ^D) -------
+send("bash -s")
+drain(0.5)
+with open(script_file, "rb") as f:
+    for line in f.read().split(b"\n"):
+        if line:
+            s.sendall(line + b"\n")
+s.sendall(b"\x04")  # Ctrl-D: EOF for bash -s
+print("### SCRIPT SENT, waiting for output...")
+
+r = wait_for(b"===SELFTEST-END===", 300)
+if r is None:
+    print("FATAL: no selftest output — last serial output:")
+    print(buf[-12000:].decode(errors="replace"))
+    sys.exit(1)
+
+# extract the output between the markers (markers come from the script)
+start_marker = buf.rfind(b"===SELFTEST-START===")
+end_marker = buf.rfind(b"===SELFTEST-END===")
+if start_marker >= 0 and end_marker > start_marker:
+    out = buf[start_marker + len(b"===SELFTEST-START==="):end_marker]
+    print(out.decode(errors="replace"))
+else:
+    # fall back to printing everything after the login
+    print(buf[-40000:].decode(errors="replace"))
 drain()
 print("### DONE")

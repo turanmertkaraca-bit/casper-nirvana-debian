@@ -31,7 +31,7 @@ function fix_uuid(s) {
     }
     return s
 }
-/^menuentry / {
+/^[ \t]*menuentry / {
     in_entry = 1
     is_515 = 0
     done_515 = 0

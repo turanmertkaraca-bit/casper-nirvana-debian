@@ -22,10 +22,22 @@ menuentry 'Debian GNU/Linux' --class debian --class gnu-linux $menuentry_id_opti
 	linux	/boot/vmlinuz-6.12.9-amd64 root=UUID=HOSTROOTUUID123 ro quiet splash intel_idle.max_cstate=1
 	initrd	/boot/initrd.img-6.12.9-amd64
 }
-menuentry 'Debian GNU/Linux, with Linux 5.15.165-0515165-generic' --class debian $menuentry_id_option 'gnulinux-5.15.165-0515165-generic-advanced-IMGROOT1' {
-	search --no-floppy --fs-uuid --set=root HOSTROOTUUID123
-	linux	/boot/vmlinuz-5.15.165-0515165-generic root=UUID=HOSTROOTUUID123 ro quiet splash intel_idle.max_cstate=1
-	initrd	/boot/initrd.img-5.15.165-0515165-generic
+submenu 'Advanced options for Debian GNU/Linux' $menuentry_id_option 'gnulinux-advanced-IMGROOT1' {
+	menuentry 'Debian GNU/Linux, with Linux 6.12.9-amd64' --class debian $menuentry_id_option 'gnulinux-6.12.9-amd64-advanced-IMGROOT1' {
+		search --no-floppy --fs-uuid --set=root HOSTROOTUUID123
+		linux	/boot/vmlinuz-6.12.9-amd64 root=UUID=HOSTROOTUUID123 ro quiet splash
+		initrd	/boot/initrd.img-6.12.9-amd64
+	}
+	menuentry 'Debian GNU/Linux, with Linux 5.15.165-0515165-generic' --class debian $menuentry_id_option 'gnulinux-5.15.165-0515165-generic-advanced-IMGROOT1' {
+		search --no-floppy --fs-uuid --set=root HOSTROOTUUID123
+		linux	/boot/vmlinuz-5.15.165-0515165-generic root=UUID=HOSTROOTUUID123 ro quiet splash intel_idle.max_cstate=1
+		initrd	/boot/initrd.img-5.15.165-0515165-generic
+	}
+	menuentry 'Debian GNU/Linux, with Linux 5.15.165-0515165-generic (recovery mode)' --class debian $menuentry_id_option 'gnulinux-5.15.165-0515165-generic-recovery-IMGROOT1' {
+		search --no-floppy --fs-uuid --set=root HOSTROOTUUID123
+		linux	/boot/vmlinuz-5.15.165-0515165-generic root=UUID=HOSTROOTUUID123 ro single dis_ucode_ldr
+		initrd	/boot/initrd.img-5.15.165-0515165-generic
+	}
 }
 EOF
 
@@ -34,8 +46,9 @@ bash "$SRC/tools/grub-casper-postprocess.sh" /tmp/grub-test.cfg HOSTROOTUUID123 
 fail=0
 grep -q 'root=UUID=IMGROOT1' /tmp/grub-test.cfg || { echo "FAIL: root UUID not replaced"; fail=1; }
 ! grep -q 'HOSTROOTUUID123' /tmp/grub-test.cfg || { echo "FAIL: host UUID still present"; fail=1; }
-grep -q 'vmlinuz-5.15.165-0515165-generic.*i2c_designware.disable_pm=1 i2c_hid.use_polling_mode=1' /tmp/grub-test.cfg \
-    || { echo "FAIL: 5.15 entry missing legacy I2C params"; fail=1; }
+# both the normal and the recovery 5.15 entries must carry the legacy params
+[ "$(grep -c 'vmlinuz-5.15.165-0515165-generic.*i2c_designware.disable_pm=1' /tmp/grub-test.cfg)" = "2" ] \
+    || { echo "FAIL: 5.15 entries missing legacy I2C params"; fail=1; }
 grep -q 'vmlinuz-6.12' /tmp/grub-test.cfg \
     && ! grep -q 'vmlinuz-6.12.*i2c_designware' /tmp/grub-test.cfg \
     || { echo "FAIL: 6.12 entry wrongly got I2C params"; fail=1; }
