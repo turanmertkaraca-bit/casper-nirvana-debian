@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Drive the QEMU serial console: log in as lvy (null password), then run a
-command script via `bash -s` (non-interactive — no readline/prompt races)
-and print the output between START/END markers.
+"""Drive the QEMU serial console for the CasperOS smoke test.
 
-Usage: qemu-serial.py <unix-sock> <script-file> [login-timeout-s]
+The selftest runs as a systemd oneshot inside the VM and prints its output
+to ttyS0 between ===SELFTEST-START=== / ===SELFTEST-END=== markers. We
+capture that, then verify the lvy login flow works, then print everything.
+
+Usage: qemu-serial.py <unix-sock> [login-timeout-s]
 """
 import socket, sys, time
 
-sock_path, script_file = sys.argv[1], sys.argv[2]
-login_timeout = int(sys.argv[3]) if len(sys.argv) > 3 else 600
+sock_path = sys.argv[1]
+login_timeout = int(sys.argv[2]) if len(sys.argv) > 2 else 600
 
 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 deadline = time.time() + 120
@@ -30,7 +32,7 @@ def recv_into():
     try:
         d = s.recv(8192)
         if d:
-            buf = (buf + d)[-300000:]
+            buf = (buf + d)[-500000:]
             return True
     except socket.timeout:
         pass
@@ -51,17 +53,30 @@ def wait_for(pattern, timeout):
 def send(line):
     s.sendall((line + "\r").encode())
 
-def drain(secs=1.0):
-    deadline = time.time() + secs
-    while time.time() < deadline:
-        if not recv_into():
-            time.sleep(0.1)
+# --- 1. capture the boot-time selftest output ------------------------------
+r = wait_for(b"===SELFTEST-START===", login_timeout)
+if r is None:
+    print("FATAL: no selftest output — last serial output:")
+    print(buf[-8000:].decode(errors="replace"))
+    sys.exit(1)
+r = wait_for(b"===SELFTEST-END===", 180)
+if r is None:
+    print("FATAL: selftest did not finish — last serial output:")
+    print(buf[-8000:].decode(errors="replace"))
+    sys.exit(1)
+start = buf.rfind(b"===SELFTEST-START===")
+end = buf.rfind(b"===SELFTEST-END===")
+out = buf[start + len(b"===SELFTEST-START==="):end]
+print("### SELFTEST OUTPUT ###")
+print(out.decode(errors="replace"))
+print("### SELFTEST OUTPUT END ###")
 
-# --- login (interactive; works: login/Parola prompts are readline-free) ---
-r = wait_for(b"login:", login_timeout)
+# --- 2. verify the lvy login flow (null password) --------------------------
+send("\r")  # make sure getty is on a fresh line
+r = wait_for(b"login:", 90)
 if r is None:
     print("FATAL: no login prompt — last serial output:")
-    print(buf[-6000:].decode(errors="replace"))
+    print(buf[-4000:].decode(errors="replace"))
     sys.exit(1)
 send("lvy")
 r = wait_for([b"Password:", b"Parola:", b"~$"], 30)
@@ -77,33 +92,4 @@ if r in (0, 1):
         print(buf[-4000:].decode(errors="replace"))
         sys.exit(1)
 print("### LOGIN OK")
-
-# --- run the script non-interactively (bash -s reads stdin until ^D) -------
-send("bash -s")
-drain(0.5)
-with open(script_file, "rb") as f:
-    data = f.read()
-# canonical-mode tty buffers are limited (~4KB) — send in small chunks
-for i in range(0, len(data), 400):
-    s.sendall(data[i:i+400])
-    time.sleep(0.05)
-s.sendall(b"\x04")  # Ctrl-D: EOF for bash -s
-print("### SCRIPT SENT, waiting for output...")
-
-r = wait_for(b"===SELFTEST-END===", 300)
-if r is None:
-    print("FATAL: no selftest output — last serial output:")
-    print(buf[-12000:].decode(errors="replace"))
-    sys.exit(1)
-
-# extract the output between the markers (markers come from the script)
-start_marker = buf.rfind(b"===SELFTEST-START===")
-end_marker = buf.rfind(b"===SELFTEST-END===")
-if start_marker >= 0 and end_marker > start_marker:
-    out = buf[start_marker + len(b"===SELFTEST-START==="):end_marker]
-    print(out.decode(errors="replace"))
-else:
-    # fall back to printing everything after the login
-    print(buf[-40000:].decode(errors="replace"))
-drain()
 print("### DONE")

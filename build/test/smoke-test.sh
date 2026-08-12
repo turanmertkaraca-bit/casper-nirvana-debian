@@ -185,15 +185,44 @@ ls /boot/grub/i386-efi >/dev/null 2>&1 && echo GRUB_IA32_OK || echo GRUB_IA32_MI
 find /boot/efi -name '*.efi' | head -5
 file /boot/efi/EFI/BOOT/BOOTIA32.EFI 2>/dev/null || true
 echo ---GOV_JOURNAL
-journalctl -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -5
+journalctl -q -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -5
 echo ---JOURNAL_ERR
-journalctl --no-pager -p err -b --no-hostname | tail -8
+journalctl -q --no-pager -p err -b --no-hostname | tail -8
 echo ---ANALYZE
 systemd-analyze time | tail -1
 echo ===SELFTEST-END===
 SELFTEST
 
 # ── boot one configuration ─────────────────────────────────────────────────
+# Inject the selftest into the test image as a boot-time oneshot (clean,
+# root, output to ttyS0). prep_bootN runs per-boot; the selftest is added
+# once by prep_selftest before the first boot.
+prep_selftest() {
+    mnt_test_img
+    cp -a "$OUT/selftest.sh" "$OUT/mnt/usr/local/bin/casper-selftest.sh"
+    cat > "$OUT/mnt/usr/lib/systemd/system/casper-selftest.service" <<'UNIT'
+[Unit]
+Description=CasperOS VM selftest
+DefaultDependencies=no
+After=local-fs.target
+Before=serial-getty@ttyS0.service getty@ttyS0.service systemd-user-sessions.target
+
+[Service]
+Type=oneshot
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/ttyS0
+ExecStart=/usr/local/bin/casper-selftest.sh
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    mkdir -p "$OUT/mnt/etc/systemd/system/multi-user.target.wants"
+    ln -sf /usr/lib/systemd/system/casper-selftest.service \
+        "$OUT/mnt/etc/systemd/system/multi-user.target.wants/casper-selftest.service"
+    umnt_test
+}
+
 run_boot() {
     local name="$1" monport="$2"
     echo "=== boot: $name ==="
@@ -214,21 +243,17 @@ run_boot() {
     sleep 15
     screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
-    python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$OUT/selftest.sh" 900 \
+    python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" 900 \
         > "$OUT/serial-$name.log" 2>&1 || true
 
     screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
     sleep 2
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
-    if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+    if grep -q '### SELFTEST OUTPUT ###' "$OUT/serial-$name.log"; then
         echo "--- $name selftest output:"
-        if grep -q '===SELFTEST-START===' "$OUT/serial-$name.log"; then
-            awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v SELFTEST || true
-        else
-            echo "(no selftest markers — raw tail:)"
-            tail -40 "$OUT/serial-$name.log"
-        fi
+        awk '/### SELFTEST OUTPUT ###/,/### SELFTEST OUTPUT END ###/' "$OUT/serial-$name.log" \
+            | grep -v 'SELFTEST OUTPUT' || true
     else
         echo "--- diagnostics for $name ---"
         echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
@@ -240,6 +265,7 @@ run_boot() {
 }
 
 static_checks
+prep_selftest
 run_boot boot1 45454
 run_boot boot2 45455
 
