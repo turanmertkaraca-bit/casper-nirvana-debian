@@ -150,6 +150,8 @@ find /boot/efi -name '*.efi' | head -5
 file /boot/efi/EFI/BOOT/BOOTIA32.EFI 2>/dev/null || true
 echo ---JOURNAL_ERR
 journalctl --no-pager -p err -b --no-hostname | tail -10
+echo ---GOV_JOURNAL
+journalctl -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -6
 echo ---ANALYZE
 systemd-analyze time | tail -1
 CMDS

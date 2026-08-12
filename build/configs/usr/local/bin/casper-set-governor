@@ -1,7 +1,11 @@
 #!/bin/bash
-# CasperOS — apply the CPU governor to all cores.
+# CasperOS — apply the CPU governor to all cores. Never fails the unit,
+# even on machines without cpufreq (e.g. VMs).
 for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    echo schedutil > "$g" 2>/dev/null || true
+    [ -f "$g" ] && echo schedutil > "$g" 2>/dev/null || true
 done
 # Enable burst (turbo) if the knob exists
-echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+if [ -f /sys/devices/system/cpu/cpufreq/boost ]; then
+    echo 1 > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null || true
+fi
+exit 0

@@ -80,12 +80,12 @@ if r is None:
     print(buf[-6000:].decode(errors="replace"))
     sys.exit(1)
 send("lvy")
-r = wait_for([b"Password:", b"~$"], 30)
+r = wait_for([b"Password:", b"Parola:", b"~$"], 30)
 if r is None:
     print("FATAL: no password prompt / shell after username — last output:")
     print(buf[-4000:].decode(errors="replace"))
     sys.exit(1)
-if r == 0:
+if r in (0, 1):
     # password prompt appeared (passwordless account usually skips it)
     send("")
     r = wait_for(b"~$", 30)
