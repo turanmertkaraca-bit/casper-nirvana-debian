@@ -97,9 +97,12 @@ cat /proc/swaps
 echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo ---DCONF
-dconf read /org/gnome/desktop/a11y/applications/screen-keyboard-enabled
-dconf read /org/gnome/desktop/input-sources/sources
-dconf read /org/gnome/shell/enabled-extensions
+ls /etc/dconf/db/local 2>/dev/null && echo DCONF_DB_OK
+grep -c screen-keyboard-enabled /etc/dconf/db/local.d/00-casper-desktop
+grep -c enabled-extensions /etc/dconf/db/local.d/10-casper-extensions
+cat /etc/dconf/db/local.d/10-casper-extensions
+ls /var/lib/gdm3/.config/monitors.xml /home/lvy/.config/monitors.xml 2>/dev/null
+grep -c '<rotation>right</rotation>' /var/lib/gdm3/.config/monitors.xml
 echo ---PLYMOUTH
 grep -i theme /etc/plymouth/plymouthd.conf
 echo ---BOOTFILES
@@ -167,7 +170,10 @@ chk "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
 done
-chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK pref present (dconf)"
+chk "$(grepq 'DCONF_DB_OK' "$s1")" "dconf system db compiled"
+chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK enabled in dconf defaults"
+chk "$(grepq 'enabled-extensions' "$s1")" "extensions list baked in dconf"
+chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (GDM)"
 chk "$(grepq "Casper Splash" "$s1")" "plymouth theme = Casper Splash"
 chk "$([ -s "$OUT/gdm-boot1.ppm" ] && echo 1 || echo 0)" "GDM screenshot captured"
 

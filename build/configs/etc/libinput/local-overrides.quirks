@@ -1,7 +1,11 @@
 # CasperOS — libinput quirk: strip pointer emulation from the I2C touchscreen
 # so Mutter/GNOME treats it as pure touch (fixes ghost-mouse drags on Wayland).
-# NOTE: libinput rejects the WHOLE file on any parse error — validated at build.
+#
+# NOTE: MatchUdevType does NOT accept "touchscreen" (values: touchpad,
+# keyboard, mouse, pointingstick, tablet) — the original quirk used it and
+# was silently rejected by libinput, disabling ALL quirks. I2C touchscreens
+# are matched by bus. BTN_TOUCH is deliberately kept (single-touch paths
+# need it); only the pointer-emulation code BTN_TOOL_FINGER is stripped.
 [Bay Trail I2C Touchscreen]
-MatchUdevType=touchscreen
 MatchBus=i2c
 AttrEventCode=-BTN_TOOL_FINGER
