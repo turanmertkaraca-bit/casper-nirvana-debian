@@ -194,7 +194,19 @@ rm -f /tmp/waudio.reg
 chown -R lvy:lvy /home/lvy/.wine 2>/dev/null || true
 
 # ── 13. Firefox policy sanity ──────────────────────────────────────────────
-[ -f /usr/lib/firefox-esr/distribution/policies.json ] && log "OK firefox policies.json" \
+# Debian's firefox-esr reads policies from /etc/firefox-esr (or the
+# distribution dir next to the binary); put policies.json wherever fits.
+FFP="/build/configs/usr/share/firefox-policies/policies.json"
+if [ -d /etc/firefox-esr ]; then
+    cp -a "$FFP" /etc/firefox-esr/policies.json
+    log "OK firefox policies.json -> /etc/firefox-esr/"
+elif [ -d /usr/lib/firefox-esr/distribution ]; then
+    cp -a "$FFP" /usr/lib/firefox-esr/distribution/policies.json
+    log "OK firefox policies.json -> /usr/lib/firefox-esr/distribution/"
+else
+    echo "WARN: firefox-esr not found — policies not applied" >> "$REPORT"
+fi
+[ -f /etc/firefox-esr/policies.json ] || [ -f /usr/lib/firefox-esr/distribution/policies.json ] \
     || echo "WARN: firefox policies.json missing" >> "$REPORT"
 
 # ── 14. sizes for the run report ───────────────────────────────────────────

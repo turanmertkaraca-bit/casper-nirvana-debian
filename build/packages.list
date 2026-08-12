@@ -114,6 +114,7 @@ alsa-ucm-conf
 # ── performance on 2 GB RAM ────────────────────────────────────────────────
 earlyoom
 zram-tools
+zstd
 
 # ── video acceleration (legacy i965 driver = Bay Trail correct one) ───────
 vainfo
