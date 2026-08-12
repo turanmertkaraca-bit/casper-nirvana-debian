@@ -73,4 +73,13 @@ if r in (0, 1):
         print(buf[-4000:].decode(errors="replace"))
         sys.exit(1)
 print("### LOGIN OK")
+
+# run the selftest via lvy's passwordless sudo; output goes to a file that
+# smoke-test.sh reads via loop mount (no tty/readline involvement)
+send("sudo -n bash -s < /usr/local/bin/casper-selftest.sh > /var/log/casper-selftest.log 2>&1")
+print("### SELFTEST LAUNCHED")
+deadline = time.time() + 90
+while time.time() < deadline:
+    recv_into()
+    time.sleep(0.5)
 print("### DONE")

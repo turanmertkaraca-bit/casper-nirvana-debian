@@ -138,7 +138,7 @@ prep_boot2() {
         || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
     uuid=$(echo "$line" | grep -oE 'UUID=[0-9a-f-]{36}' | head -1 | cut -d= -f2)
     cmdline=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)); exit }}')
-    cmdline="$cmdline console=ttyS0,115200"
+    cmdline="$cmdline console=ttyS0,115200 earlyprintk=serial,ttyS0,115200"
     [ -n "$uuid" ] || { echo "FATAL: no root UUID in 5.15 grub line"; umnt_test; exit 1; }
     {
         echo 'set timeout=0'
@@ -195,33 +195,13 @@ echo ===SELFTEST-END===
 SELFTEST
 
 # ── boot one configuration ─────────────────────────────────────────────────
-# Inject the selftest into the test image as a boot-time oneshot (clean,
-# root, output to ttyS0). prep_bootN runs per-boot; the selftest is added
-# once by prep_selftest before the first boot.
+# Inject the selftest script into the test image (run later via sudo by the
+# serial driver; output lands in /var/log/casper-selftest.log in the guest).
 prep_selftest() {
     chmod +x "$OUT/selftest.sh"
     mnt_test_img
     cp -a "$OUT/selftest.sh" "$OUT/mnt/usr/local/bin/casper-selftest.sh"
     chmod +x "$OUT/mnt/usr/local/bin/casper-selftest.sh"
-    cat > "$OUT/mnt/usr/lib/systemd/system/casper-selftest.service" <<'UNIT'
-[Unit]
-Description=CasperOS VM selftest
-DefaultDependencies=no
-After=local-fs.target
-Before=serial-getty@ttyS0.service getty@ttyS0.service systemd-user-sessions.target
-
-[Service]
-Type=oneshot
-StandardOutput=file:/var/log/casper-selftest.log
-StandardError=file:/var/log/casper-selftest.log
-ExecStart=/usr/local/bin/casper-selftest.sh
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-    mkdir -p "$OUT/mnt/etc/systemd/system/multi-user.target.wants"
-    ln -sf /usr/lib/systemd/system/casper-selftest.service \
-        "$OUT/mnt/etc/systemd/system/multi-user.target.wants/casper-selftest.service"
     umnt_test
 }
 
@@ -270,8 +250,14 @@ run_boot() {
     collect_selftest "$name"
     echo "--- $name selftest output:"
     cat "$OUT/selftest-$name.log"
+    echo "--- $name serial diagnostics:"
+    grep -E 'FATAL|LOGIN OK|SELFTEST LAUNCHED' "$OUT/serial-$name.log" || true
+    if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+        echo "serial tail:"; tail -12 "$OUT/serial-$name.log" 2>/dev/null || true
+    fi
     echo "--- $name screenshots:"
     ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
+    ppm_visible "$OUT/early-$name.ppm" 2>/dev/null || true
     echo "=== boot $name done"
 }
 
