@@ -138,6 +138,7 @@ prep_boot2() {
         || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
     uuid=$(echo "$line" | grep -oE 'UUID=[0-9a-f-]{36}' | head -1 | cut -d= -f2)
     cmdline=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)); exit }}')
+    cmdline="$cmdline console=ttyS0,115200"
     [ -n "$uuid" ] || { echo "FATAL: no root UUID in 5.15 grub line"; umnt_test; exit 1; }
     {
         echo 'set timeout=0'
@@ -198,8 +199,10 @@ SELFTEST
 # root, output to ttyS0). prep_bootN runs per-boot; the selftest is added
 # once by prep_selftest before the first boot.
 prep_selftest() {
+    chmod +x "$OUT/selftest.sh"
     mnt_test_img
     cp -a "$OUT/selftest.sh" "$OUT/mnt/usr/local/bin/casper-selftest.sh"
+    chmod +x "$OUT/mnt/usr/local/bin/casper-selftest.sh"
     cat > "$OUT/mnt/usr/lib/systemd/system/casper-selftest.service" <<'UNIT'
 [Unit]
 Description=CasperOS VM selftest
