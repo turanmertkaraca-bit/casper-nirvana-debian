@@ -20,23 +20,26 @@ rm -rf "$OUT" && mkdir -p "$OUT"
 cp --sparse=always "$IMG" "$OUT/test.img"
 
 # ── 32-bit OVMF firmware (Bay Trail = IA32 UEFI) ───────────────────────────
+# Debian 13's edk2 no longer builds IA32; bookworm's ovmf-ia32 does.
+# Search order: installed copies → Debian bookworm pool (pinned URL).
 FCODE=""; FVARS=""
-for d in /usr/share/OVMF /usr/share/ovmf; do
-    [ -f "$d/OVMF_CODE.ia32.fd" ] && FCODE="$d/OVMF_CODE.ia32.fd"
-    [ -f "$d/OVMF_VARS.ia32.fd" ] && FVARS="$d/OVMF_VARS.ia32.fd"
+for f in /usr/share/OVMF/OVMF_CODE.ia32.fd /usr/share/OVMF/OVMF32_CODE_4M.secboot.fd; do
+    [ -f "$f" ] && FCODE="$f"
+done
+for f in /usr/share/OVMF/OVMF_VARS.ia32.fd /usr/share/OVMF/OVMF32_VARS_4M.fd; do
+    [ -f "$f" ] && FVARS="$f"
 done
 if [ -z "$FCODE" ]; then
-    echo "no OVMF ia32 firmware — downloading Debian's ovmf package"
-    cd /tmp
-    PKG=$(curl -fsSL http://deb.debian.org/debian/pool/main/o/ovmf/ | grep -oE 'ovmf_[0-9][^" ]*_amd64\.deb' | sort -V | tail -1)
-    curl -fsSL -o ovmf.deb "http://deb.debian.org/debian/pool/main/o/ovmf/$PKG"
-    mkdir -p ovmf-x && dpkg-deb -x ovmf.deb ovmf-x
-    FCODE=$(find ovmf-x -name 'OVMF_CODE.ia32.fd' | head -1)
-    FVARS=$(find ovmf-x -name 'OVMF_VARS.ia32.fd' | head -1)
+    echo "no OVMF ia32 firmware — downloading Debian bookworm ovmf-ia32"
+    curl -fsSL -o /tmp/ovmf-ia32.deb \
+        http://deb.debian.org/debian/pool/main/e/edk2/ovmf-ia32_2022.11-6+deb12u2_all.deb
+    mkdir -p /tmp/ovmf-i32x && dpkg-deb -x /tmp/ovmf-ia32.deb /tmp/ovmf-i32x
+    FCODE=$(find /tmp/ovmf-i32x -name 'OVMF32_CODE*.fd' | head -1)
+    FVARS=$(find /tmp/ovmf-i32x -name 'OVMF32_VARS*.fd' | head -1)
 fi
 [ -n "$FCODE" ] || { echo "FATAL: no IA32 OVMF firmware found" >&2; exit 1; }
 [ -n "$FVARS" ] || FVARS="$FCODE"
-echo "firmware: $FCODE"
+echo "firmware: $FCODE + $FVARS"
 
 # ── test.img manipulation (loop-mount the root partition) ──────────────────
 mnt_test_img() {
