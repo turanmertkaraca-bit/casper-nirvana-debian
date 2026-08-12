@@ -125,26 +125,33 @@ prep_boot1() {
     umnt_test
 }
 
-# boot 2 (fallback): extract the 5.15 kernel + its EXACT postprocessed
-# cmdline from grub.cfg, and stage them for a direct qemu kernel boot
+# boot 2 (fallback): write a minimal grub.cfg that boots the 5.15 kernel
+# directly, using the exact postprocessed cmdline from the real grub.cfg.
+# (The device user reaches this entry via Shift → Advanced options; here we
+# test GRUB + kernel + initramfs + params without menu navigation.)
 prep_boot2() {
     mnt_test_img
-    local line
-    line=$(awk '/linux[ \t]+\/boot\/vmlinuz-5\.15/ {print; exit}' "$OUT/mnt/boot/grub/grub.cfg")
+    local cfg="$OUT/mnt/boot/grub/grub.cfg" line uuid cmdline
+    line=$(awk '/linux[ \t]+\/boot\/vmlinuz-5\.15/ {print; exit}' "$cfg")
     [ -n "$line" ] || { echo "FATAL: no 5.15 linux line in grub.cfg"; umnt_test; exit 1; }
     echo "$line" | grep -q 'i2c_designware.disable_pm=1' \
         || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
-    # cmdline = everything from the first root= field onward
-    echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)) " console=ttyS0,115200"; exit }}' \
-        > "$OUT/k515.cmdline"
-    cp -a "$OUT/mnt/boot/vmlinuz-5.15"* "$OUT/" 2>/dev/null || true
-    cp -a "$OUT/mnt/boot/initrd.img-5.15"* "$OUT/" 2>/dev/null || true
-    K515_VMLINUZ=$(ls "$OUT"/vmlinuz-5.15* | head -1)
-    K515_INITRD=$(ls "$OUT"/initrd.img-5.15* | head -1)
-    [ -n "${K515_VMLINUZ:-}" ] || { echo "FATAL: 5.15 kernel not found in /boot"; umnt_test; exit 1; }
+    uuid=$(echo "$line" | grep -oE 'UUID=[0-9a-f-]{36}' | head -1 | cut -d= -f2)
+    cmdline=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)); exit }}')
+    [ -n "$uuid" ] || { echo "FATAL: no root UUID in 5.15 grub line"; umnt_test; exit 1; }
+    {
+        echo 'set timeout=0'
+        echo 'set default=0'
+        echo "menuentry 'CasperOS 5.15 test' {"
+        echo '    insmod part_gpt'
+        echo '    insmod ext2'
+        echo "    search --no-floppy --fs-uuid --set=root $uuid"
+        echo "    linux /boot/vmlinuz-5.15.165-0515165-generic $cmdline"
+        echo '    initrd /boot/initrd.img-5.15.165-0515165-generic'
+        echo '}'
+    } > "$OUT/mnt/boot/grub/grub.cfg"
     umnt_test
-    echo "5.15 kernel: $K515_VMLINUZ"
-    echo "5.15 cmdline: $(cat "$OUT/k515.cmdline")"
+    echo "5.15 boot cmdline: $cmdline"
 }
 
 # ── assertion battery (run as lvy over serial via bash -s) ─────────────────
@@ -188,17 +195,13 @@ SELFTEST
 
 # ── boot one configuration ─────────────────────────────────────────────────
 run_boot() {
-    local name="$1" monport="$2" kernel_args=()
+    local name="$1" monport="$2"
     echo "=== boot: $name ==="
     "prep_$name"
-    if [ "$name" = "boot2" ]; then
-        kernel_args=(-kernel "$K515_VMLINUZ" -initrd "$K515_INITRD" -append "$(cat "$OUT/k515.cmdline")")
-    fi
     cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
     qemu-system-x86_64 \
         -enable-kvm -machine q35 -m 2048 -cpu host \
         -drive file="$OUT/test.img",format=raw,if=ide \
-        "${kernel_args[@]}" \
         -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
         -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
         -chardev socket,id=ser,path="$OUT/ser-$name.sock",server=on,wait=off \
@@ -218,7 +221,10 @@ run_boot() {
     sleep 2
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
-    if ! grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+    if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+        echo "--- $name selftest output:"
+        awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v SELFTEST
+    else
         echo "--- diagnostics for $name ---"
         echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
         echo "serial log tail:"; tail -25 "$OUT/serial-$name.log" 2>/dev/null || true
@@ -254,7 +260,7 @@ chk "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
 chk "$(grepq 'BOOTIA32.EFI' "$s1")" "BOOTIA32.EFI on ESP"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s1")" "intel_idle.max_cstate=1 in cmdline"
 chk "$(grepq 'mitigations=off' "$s1")" "mitigations=off in cmdline"
-chk "$(grepq 'i2c_designware' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
+chk "$(grepq 'i2c_designware.disable_pm' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
 chk "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
