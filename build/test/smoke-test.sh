@@ -223,7 +223,12 @@ run_boot() {
     wait "$qpid" 2>/dev/null || true
     if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
         echo "--- $name selftest output:"
-        awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v SELFTEST
+        if grep -q '===SELFTEST-START===' "$OUT/serial-$name.log"; then
+            awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v SELFTEST || true
+        else
+            echo "(no selftest markers — raw tail:)"
+            tail -40 "$OUT/serial-$name.log"
+        fi
     else
         echo "--- diagnostics for $name ---"
         echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true

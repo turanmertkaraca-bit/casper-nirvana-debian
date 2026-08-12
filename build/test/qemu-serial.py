@@ -82,9 +82,11 @@ print("### LOGIN OK")
 send("bash -s")
 drain(0.5)
 with open(script_file, "rb") as f:
-    for line in f.read().split(b"\n"):
-        if line:
-            s.sendall(line + b"\n")
+    data = f.read()
+# canonical-mode tty buffers are limited (~4KB) — send in small chunks
+for i in range(0, len(data), 400):
+    s.sendall(data[i:i+400])
+    time.sleep(0.05)
 s.sendall(b"\x04")  # Ctrl-D: EOF for bash -s
 print("### SCRIPT SENT, waiting for output...")
 
