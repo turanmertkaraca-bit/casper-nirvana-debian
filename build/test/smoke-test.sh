@@ -212,9 +212,8 @@ Before=serial-getty@ttyS0.service getty@ttyS0.service systemd-user-sessions.targ
 
 [Service]
 Type=oneshot
-StandardOutput=tty
-StandardError=tty
-TTYPath=/dev/ttyS0
+StandardOutput=file:/var/log/casper-selftest.log
+StandardError=file:/var/log/casper-selftest.log
 ExecStart=/usr/local/bin/casper-selftest.sh
 
 [Install]
@@ -226,13 +225,28 @@ UNIT
     umnt_test
 }
 
+# collect the guest's selftest log after shutdown
+collect_selftest() { # name
+    mnt_test_img
+    if [ -f "$OUT/mnt/var/log/casper-selftest.log" ]; then
+        cp -a "$OUT/mnt/var/log/casper-selftest.log" "$OUT/selftest-$name.log"
+        echo "collected selftest log: $(wc -l < "$OUT/selftest-$name.log") lines"
+    else
+        echo "NO selftest log found in guest"
+        : > "$OUT/selftest-$name.log"
+    fi
+    umnt_test
+}
+
 run_boot() {
     local name="$1" monport="$2"
     echo "=== boot: $name ==="
     "prep_$name"
     cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
+    # qemu64: conservative CPU model — the 5.15 kernel must boot on it
+    # (a modern host CPU exposes features 5.15 may not know about)
     qemu-system-x86_64 \
-        -enable-kvm -machine q35 -m 2048 -cpu host \
+        -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
         -drive file="$OUT/test.img",format=raw,if=ide \
         -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
         -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
@@ -253,15 +267,9 @@ run_boot() {
     sleep 2
     kill "$qpid" 2>/dev/null || true
     wait "$qpid" 2>/dev/null || true
-    if grep -q '### SELFTEST OUTPUT ###' "$OUT/serial-$name.log"; then
-        echo "--- $name selftest output:"
-        awk '/### SELFTEST OUTPUT ###/,/### SELFTEST OUTPUT END ###/' "$OUT/serial-$name.log" \
-            | grep -v 'SELFTEST OUTPUT' || true
-    else
-        echo "--- diagnostics for $name ---"
-        echo "qemu log tail:"; tail -15 "$OUT/qemu-$name.log" 2>/dev/null || true
-        echo "serial log tail:"; tail -25 "$OUT/serial-$name.log" 2>/dev/null || true
-    fi
+    collect_selftest "$name"
+    echo "--- $name selftest output:"
+    cat "$OUT/selftest-$name.log"
     echo "--- $name screenshots:"
     ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
     echo "=== boot $name done"
@@ -286,8 +294,9 @@ chk "$(grepq 'STATIC_OK 5.15 GRUB entry present' "$OUT/static-results.txt")" "5.
 
 echo ""
 echo "══════════════════════ 6.12 (default kernel, via GRUB) ═════════════"
-s1="$OUT/serial-boot1.log"
-chk "$(grepq '### LOGIN OK' "$s1")" "login on serial console"
+s1="$OUT/selftest-boot1.log"
+r1="$OUT/serial-boot1.log"
+chk "$(grepq '### LOGIN OK' "$r1")" "login on serial console (null password)"
 chk "$(grepq 'UEFI_OK' "$s1")" "booted via (32-bit OVMF) UEFI"
 chk "$(grepq '^6\.12' "$s1")" "kernel 6.12"
 chk "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
@@ -307,9 +316,10 @@ chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 chk "$(ppm_visible "$OUT/gdm-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
 
 echo ""
-echo "══════════════════════ 5.15.165 (fallback kernel, direct boot) ═══════"
-s2="$OUT/serial-boot2.log"
-chk "$(grepq '### LOGIN OK' "$s2")" "login on serial console"
+echo "══════════════════════ 5.15.165 (fallback kernel, via GRUB) ════════"
+s2="$OUT/selftest-boot2.log"
+r2="$OUT/serial-boot2.log"
+chk "$(grepq '### LOGIN OK' "$r2")" "login on serial console (null password)"
 chk "$(grepq '^5\.15' "$s2")" "kernel 5.15.165"
 chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "legacy I2C params in cmdline"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "polling mode param in cmdline"

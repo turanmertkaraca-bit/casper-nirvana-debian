@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Drive the QEMU serial console for the CasperOS smoke test.
 
-The selftest runs as a systemd oneshot inside the VM and prints its output
-to ttyS0 between ===SELFTEST-START=== / ===SELFTEST-END=== markers. We
-capture that, then verify the lvy login flow works, then print everything.
+The system-level selftest writes to /var/log/casper-selftest.log inside the
+guest (read by smoke-test.sh via loop mount). This script only verifies the
+lvy login flow (null password) works.
 
 Usage: qemu-serial.py <unix-sock> [login-timeout-s]
 """
@@ -32,7 +32,7 @@ def recv_into():
     try:
         d = s.recv(8192)
         if d:
-            buf = (buf + d)[-500000:]
+            buf = (buf + d)[-100000:]
             return True
     except socket.timeout:
         pass
@@ -53,30 +53,11 @@ def wait_for(pattern, timeout):
 def send(line):
     s.sendall((line + "\r").encode())
 
-# --- 1. capture the boot-time selftest output ------------------------------
-r = wait_for(b"===SELFTEST-START===", login_timeout)
-if r is None:
-    print("FATAL: no selftest output — last serial output:")
-    print(buf[-8000:].decode(errors="replace"))
-    sys.exit(1)
-r = wait_for(b"===SELFTEST-END===", 180)
-if r is None:
-    print("FATAL: selftest did not finish — last serial output:")
-    print(buf[-8000:].decode(errors="replace"))
-    sys.exit(1)
-start = buf.rfind(b"===SELFTEST-START===")
-end = buf.rfind(b"===SELFTEST-END===")
-out = buf[start + len(b"===SELFTEST-START==="):end]
-print("### SELFTEST OUTPUT ###")
-print(out.decode(errors="replace"))
-print("### SELFTEST OUTPUT END ###")
-
-# --- 2. verify the lvy login flow (null password) --------------------------
-send("\r")  # make sure getty is on a fresh line
-r = wait_for(b"login:", 90)
+# --- wait for the login prompt, then verify the null-password login --------
+r = wait_for(b"login:", login_timeout)
 if r is None:
     print("FATAL: no login prompt — last serial output:")
-    print(buf[-4000:].decode(errors="replace"))
+    print(buf[-6000:].decode(errors="replace"))
     sys.exit(1)
 send("lvy")
 r = wait_for([b"Password:", b"Parola:", b"~$"], 30)
