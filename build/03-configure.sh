@@ -14,6 +14,8 @@ log() { printf '  %s\n' "$*"; }
 
 # ── 1. apt sources (deb822, updateable image) ──────────────────────────────
 log "writing apt sources (trixie + security, all components)"
+# remove the one-liner mmdebstrap wrote so there's no duplicate-source noise
+rm -f /etc/apt/sources.list
 cat > /etc/apt/sources.list.d/debian.sources <<EOF
 Types: deb
 URIs: http://deb.debian.org/debian
@@ -28,23 +30,38 @@ Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 
-# ── 2. static configuration tree (configs/ mirrors the image root) ─────────
-log "applying static configuration tree"
-cp -a "$B/configs/etc/." /etc/
-cp -a "$B/configs/usr/." /usr/
-chmod 440 /etc/sudoers.d/90-casper-lvy
+# never prompt on conffile changes (keep the existing file) — so any config
+# we pre-place can never wedge an install
+cat > /etc/apt/apt.conf.d/99casper <<'EOF'
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+APT::AutoRemove::RecommendsImportant "false";
+DPkg::options:: "--force-confdef";
+DPkg::options:: "--force-confold";
+EOF
 
-# ── 3. initramfs tuning BEFORE any kernel is installed ─────────────────────
+# ── 2. dpkg + initramfs tuning BEFORE any packages are installed ──────────
+# dpkg path-excludes (man/doc/locale) so even the first install is lean
+mkdir -p /etc/dpkg/dpkg.cfg.d
+cp -a "$B/configs/etc/dpkg/dpkg.cfg.d/10-casper" /etc/dpkg/dpkg.cfg.d/
 mkdir -p /etc/initramfs-tools/initramfs.conf.d
 cp -a "$B/configs/etc/initramfs-tools/initramfs.conf.d/99-casper.conf" /etc/initramfs-tools/initramfs.conf.d/
 chmod 644 /etc/initramfs-tools/initramfs.conf.d/99-casper.conf
 
-# ── 4. main package install ────────────────────────────────────────────────
+# ── 3. main package install ────────────────────────────────────────────────
 log "apt update"
 apt-get update -qq
 log "installing package set (this is the long step)"
 apt-get install -y -qq --no-install-recommends $(grep -v '^#' "$B/packages.list" | grep -v '^$') || \
     apt-get install -y --no-install-recommends $(grep -v '^#' "$B/packages.list" | grep -v '^$')
+
+# ── 4. static configuration tree (configs/ mirrors the image root) ─────────
+# applied AFTER package install: our tuned files simply win over the
+# packages' defaults, and dpkg never sees a conflict.
+log "applying static configuration tree"
+cp -a "$B/configs/etc/." /etc/
+cp -a "$B/configs/usr/." /usr/
+chmod 440 /etc/sudoers.d/90-casper-lvy
 
 # ── 5. firmware sanity ─────────────────────────────────────────────────────
 [ -f /lib/firmware/intel/fw_sst_0f28.bin ] \
