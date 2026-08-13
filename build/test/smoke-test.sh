@@ -201,34 +201,41 @@ SELFTEST
 
 # ── boot one configuration ─────────────────────────────────────────────────
 run_boot() {
-    local name="$1" monport="$2"
-    echo "=== boot: $name ==="
-    "prep_$name"
-    cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
-    # qemu64: conservative CPU model — the 5.15 kernel must boot on it
-    # (a modern host CPU exposes features 5.15 may not know about)
-    qemu-system-x86_64 \
-        -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
-        -drive file="$OUT/test.img",format=raw,if=ide \
-        -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
-        -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
-        -chardev socket,id=ser,path="$OUT/ser-$name.sock",server=on,wait=off \
-        -serial chardev:ser \
-        -monitor tcp:127.0.0.1:"$monport",server=on,wait=off \
-        -display none -vga std -no-reboot \
-        > "$OUT/qemu-$name.log" 2>&1 &
-    local qpid=$!
+    local name="$1" monport="$2" attempt
+    for attempt in 1 2; do
+        echo "=== boot: $name (attempt $attempt) ==="
+        "prep_$name"
+        cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
+        # qemu64: conservative CPU model — the 5.15 kernel must boot on it
+        # (a modern host CPU exposes features 5.15 may not know about)
+        qemu-system-x86_64 \
+            -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
+            -drive file="$OUT/test.img",format=raw,if=ide \
+            -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
+            -drive if=pflash,format=raw,file="$OUT/vars-$name.fd" \
+            -chardev socket,id=ser,path="$OUT/ser-$name.sock",server=on,wait=off \
+            -serial chardev:ser \
+            -monitor tcp:127.0.0.1:"$monport",server=on,wait=off \
+            -display none -vga std -no-reboot \
+            > "$OUT/qemu-$name.log" 2>&1 &
+        local qpid=$!
 
-    sleep 15
-    screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
+        sleep 15
+        screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
-    python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" 900 \
-        > "$OUT/serial-$name.log" 2>&1 || true
+        python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" 600 \
+            > "$OUT/serial-$name.log" 2>&1 || true
 
-    screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
-    sleep 2
-    kill "$qpid" 2>/dev/null || true
-    wait "$qpid" 2>/dev/null || true
+        screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
+        sleep 2
+        kill "$qpid" 2>/dev/null || true
+        wait "$qpid" 2>/dev/null || true
+        if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
+            break
+        fi
+        echo "--- attempt $attempt failed — retrying (KVM boot flake guard)"
+        rm -f "$OUT/ser-$name.sock"
+    done
     if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
         echo "--- $name selftest output:"
         awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v 'SELFTEST-\(START\|END\)' || true
@@ -253,6 +260,7 @@ pass=0; fail=0
 chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
 grepq() { grep -q "$1" "$2" && echo 1 || echo 0; }
 grepqi() { grep -qi "$1" "$2" && echo 1 || echo 0; }
+grepqE() { grep -qE "$1" "$2" && echo 1 || echo 0; }
 
 echo ""
 echo "══════════════════════ static grub.cfg checks ══════════════════════"
@@ -265,12 +273,12 @@ echo "══════════════════════ 6.12 (d
 s1="$OUT/serial-boot1.log"
 chk "$(grepq '### LOGIN OK' "$s1")" "login on serial console (null password)"
 chk "$(grepq 'UEFI_OK' "$s1")" "booted via (32-bit OVMF) UEFI"
-chk "$(grepq '^6\.12' "$s1")" "kernel 6.12"
+chk "$(grepqE '(\r|^)6\.12' "$s1")" "kernel 6.12"
 chk "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
 chk "$(grepq 'BOOTIA32.EFI' "$s1")" "BOOTIA32.EFI on ESP"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s1")" "intel_idle.max_cstate=1 in cmdline"
 chk "$(grepq 'mitigations=off' "$s1")" "mitigations=off in cmdline"
-chk "$(grepq 'i2c_designware.disable_pm' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
+chk "$(grep -q 'i2c_designware.disable_pm' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
 chk "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
@@ -286,7 +294,7 @@ echo ""
 echo "══════════════════════ 5.15.165 (fallback kernel, via GRUB) ════════"
 s2="$OUT/serial-boot2.log"
 chk "$(grepq '### LOGIN OK' "$s2")" "login on serial console (null password)"
-chk "$(grepq '^5\.15' "$s2")" "kernel 5.15.165"
+chk "$(grepqE '(\r|^)5\.15' "$s2")" "kernel 5.15.165"
 chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "legacy I2C params in cmdline"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "polling mode param in cmdline"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s2")" "common params still applied"

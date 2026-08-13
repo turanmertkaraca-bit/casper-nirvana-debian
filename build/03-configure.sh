@@ -62,6 +62,10 @@ log "applying static configuration tree"
 cp -a "$B/configs/etc/." /etc/
 cp -a "$B/configs/usr/." /usr/
 chmod 440 /etc/sudoers.d/90-casper-lvy
+# ensure our helper scripts are executable (dpkg/cp may have stripped modes)
+chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
+         /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
+         /usr/local/bin/casper-nvram 2>/dev/null || true
 
 # ── 5. firmware sanity ─────────────────────────────────────────────────────
 [ -f /lib/firmware/intel/fw_sst_0f28.bin ] \
