@@ -84,9 +84,9 @@ jobs:
         run: |
           cd /tmp
           gh release create "${{ github.ref_name }}" \
-            casper-n220.img.xz.* casper-n220.img.xz.sha256 \
+            casper-n220.img.xz.* \
+            --repo "${{ github.repository }}" \
             --title "CasperOS ${{ github.ref_name }}" \
             --notes "CasperOS image for Casper Nirvana N220/N240. See README for flashing. \
             Split parts: download all casper-n220.img.xz.XX parts + sha256, then:
-            \`cat casper-n220.img.xz.* | xz -dc > casper-n220.img\`" \
-            || true
+            \`cat casper-n220.img.xz.* | xz -dc > casper-n220.img\`"
