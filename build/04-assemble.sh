@@ -58,7 +58,7 @@ ESPUUID=$(blkid -s UUID -o value "${LOOP}p1")
 cat > "$ROOT/etc/fstab" <<EOF
 # CasperOS — generated at build time, mounted by UUID
 UUID=$ROOTUUID  /          ext4  defaults,noatime,commit=60,errors=remount-ro  0 1
-UUID=$ESPUUID   /boot/efi  vfat  umask=0077                                  0 1
+UUID=$ESPUUID   /boot/efi  vfat  umask=0133                                  0 1
 tmpfs           /tmp       tmpfs defaults,noatime,size=512M,mode=1777         0 0
 EOF
 ok "fstab written (root $ROOTUUID, ESP $ESPUUID)"

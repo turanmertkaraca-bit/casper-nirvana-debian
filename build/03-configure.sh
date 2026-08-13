@@ -95,7 +95,7 @@ setupcon --save 2>/dev/null || true
 
 # ── 7. user lvy ────────────────────────────────────────────────────────────
 log "creating user lvy (no password, sudo NOPASSWD, audio/video/input)"
-id lvy >/dev/null 2>&1 || useradd -m -s /bin/bash -G audio,video,input,sudo -U lvy
+id lvy >/dev/null 2>&1 || useradd -m -s /bin/bash -G audio,video,input,sudo,adm,plugdev,dip -U lvy
 # useradd leaves the password field unusable ("!") — make it a real null
 # password so login works with just Enter (PAM nullok default on Debian)
 passwd -d lvy
