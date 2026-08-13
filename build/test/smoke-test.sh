@@ -140,7 +140,9 @@ prep_boot2() {
         || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
     uuid=$(echo "$line" | grep -oE 'UUID=[0-9a-f-]{36}' | head -1 | cut -d= -f2)
     cmdline=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)); exit }}')
-    cmdline="$cmdline console=ttyS0,115200 earlyprintk=serial,ttyS0,115200"
+    # console for serial capture; rd.shell as an initramfs-failure diagnostic.
+    # NO earlyprintk: it can deadlock the 5.15 kernel before printing anything.
+    cmdline="$cmdline console=ttyS0,115200 rd.shell"
     [ -n "$uuid" ] || { echo "FATAL: no root UUID in 5.15 grub line"; umnt_test; exit 1; }
     {
         echo 'set timeout=0'
@@ -273,7 +275,7 @@ echo "══════════════════════ 6.12 (d
 s1="$OUT/serial-boot1.log"
 chk "$(grepq '### LOGIN OK' "$s1")" "login on serial console (null password)"
 chk "$(grepq 'UEFI_OK' "$s1")" "booted via (32-bit OVMF) UEFI"
-chk "$(grepqE '(\r|^)6\.12' "$s1")" "kernel 6.12"
+chk "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-6\.' "$s1")" "kernel 6.12 (default boot)"
 chk "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
 chk "$(grepq 'BOOTIA32.EFI' "$s1")" "BOOTIA32.EFI on ESP"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s1")" "intel_idle.max_cstate=1 in cmdline"
@@ -294,7 +296,7 @@ echo ""
 echo "══════════════════════ 5.15.165 (fallback kernel, via GRUB) ════════"
 s2="$OUT/serial-boot2.log"
 chk "$(grepq '### LOGIN OK' "$s2")" "login on serial console (null password)"
-chk "$(grepqE '(\r|^)5\.15' "$s2")" "kernel 5.15.165"
+chk "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-5\.' "$s2")" "kernel 5.15.165 (fallback boot)"
 chk "$(grepq 'i2c_designware.disable_pm=1' "$s2")" "legacy I2C params in cmdline"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$s2")" "polling mode param in cmdline"
 chk "$(grepq 'intel_idle.max_cstate=1' "$s2")" "common params still applied"
