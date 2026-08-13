@@ -140,8 +140,9 @@ prep_boot2() {
         || { echo "FATAL: 5.15 grub.cfg line missing legacy I2C params"; umnt_test; exit 1; }
     uuid=$(echo "$line" | grep -oE 'UUID=[0-9a-f-]{36}' | head -1 | cut -d= -f2)
     cmdline=$(echo "$line" | awk '{for(i=1;i<=NF;i++) if ($i ~ /^root=/) { print substr($0, index($0,$i)); exit }}')
+    # strip any previous test-only params (retries re-run this function)
+    cmdline=$(echo "$cmdline" | sed -E 's/ console=ttyS0,[0-9]+( rd\.shell)?$//; s/ rd\.shell//')
     # console for serial capture; rd.shell as an initramfs-failure diagnostic.
-    # NO earlyprintk: it can deadlock the 5.15 kernel before printing anything.
     cmdline="$cmdline console=ttyS0,115200 rd.shell"
     [ -n "$uuid" ] || { echo "FATAL: no root UUID in 5.15 grub line"; umnt_test; exit 1; }
     {
@@ -201,6 +202,20 @@ systemd-analyze time | tail -1
 echo ===SELFTEST-END===
 SELFTEST
 
+# dump the guest's journal from the mounted fs (shows where a boot hung)
+dump_journal() { # name
+    mnt_test_img
+    if [ -d "$OUT/mnt/var/log/journal" ]; then
+        journalctl -D "$OUT/mnt/var/log/journal" -b --no-pager 2>/dev/null \
+            | tail -40 > "$OUT/journal-$name.txt" || true
+        echo "journal lines: $(wc -l < "$OUT/journal-$name.txt")"
+    else
+        echo "no guest journal found"
+        : > "$OUT/journal-$name.txt"
+    fi
+    umnt_test
+}
+
 # ── boot one configuration ─────────────────────────────────────────────────
 run_boot() {
     local name="$1" monport="$2" attempt
@@ -242,6 +257,9 @@ run_boot() {
         echo "--- $name selftest output:"
         awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v 'SELFTEST-\(START\|END\)' || true
     else
+        echo "--- $name guest journal (tail):"
+        dump_journal "$name"
+        cat "$OUT/journal-$name.txt" 2>/dev/null || true
         echo "--- $name qemu log tail:"
         tail -12 "$OUT/qemu-$name.log" 2>/dev/null || true
     fi
