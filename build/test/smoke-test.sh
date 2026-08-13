@@ -210,7 +210,7 @@ dump_journal() { # name
     mnt_test_img
     if [ -d "$OUT/mnt/var/log/journal" ]; then
         journalctl -D "$OUT/mnt/var/log/journal" -b --no-pager 2>/dev/null \
-            | tail -120 > "$OUT/journal-$name.txt" || true
+            | tail -1000 > "$OUT/journal-$name.txt" || true
         echo "journal lines: $(wc -l < "$OUT/journal-$name.txt")"
     else
         echo "no guest journal found"
