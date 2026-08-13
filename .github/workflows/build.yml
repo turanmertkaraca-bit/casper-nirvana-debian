@@ -67,8 +67,8 @@ jobs:
             /tmp/casper-n220.img.xz.sha256
             /tmp/casper-test/serial-boot1.log
             /tmp/casper-test/serial-boot2.log
-            /tmp/casper-test/selftest-boot1.log
-            /tmp/casper-test/selftest-boot2.log
+            /tmp/casper-test/qemu-boot1.log
+            /tmp/casper-test/qemu-boot2.log
             /tmp/casper-test/early-boot1.ppm
             /tmp/casper-test/early-boot2.ppm
             /tmp/casper-test/gdm-boot1.ppm

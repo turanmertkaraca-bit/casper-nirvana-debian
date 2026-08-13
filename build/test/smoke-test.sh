@@ -115,11 +115,13 @@ static_checks() {
     umnt_test
 }
 
-# boot 1 (default): append console=ttyS0 to the 6.12 entry
+# boot 1 (default): append console=ttyS0 + rd.shell (test-only diagnostics)
+# to the 6.12 entry. rd.shell only acts if the initramfs fails — normal
+# boots are unaffected.
 prep_boot1() {
     mnt_test_img
     awk '
-        { if (!done && $0 ~ /linux[ \t]+\/boot\/vmlinuz-6\./ && $0 !~ /console=ttyS0/) { print $0 " console=ttyS0,115200"; done=1; next } print }
+        { if (!done && $0 ~ /linux[ \t]+\/boot\/vmlinuz-6\./ && $0 !~ /console=ttyS0/) { print $0 " console=ttyS0,115200 rd.shell"; done=1; next } print }
     ' "$OUT/mnt/boot/grub/grub.cfg" > "$OUT/mnt/boot/grub/grub.cfg.new"
     mv "$OUT/mnt/boot/grub/grub.cfg.new" "$OUT/mnt/boot/grub/grub.cfg"
     umnt_test
@@ -230,6 +232,9 @@ run_boot() {
     if grep -q '### LOGIN OK' "$OUT/serial-$name.log"; then
         echo "--- $name selftest output:"
         awk '/===SELFTEST-START===/,/===SELFTEST-END===/' "$OUT/serial-$name.log" | grep -v 'SELFTEST-\(START\|END\)' || true
+    else
+        echo "--- $name qemu log tail:"
+        tail -12 "$OUT/qemu-$name.log" 2>/dev/null || true
     fi
     echo "--- $name serial tail:"
     tail -12 "$OUT/serial-$name.log" 2>/dev/null || true
