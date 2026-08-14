@@ -50,9 +50,13 @@ mkdir -p "$OUT/pd"
 mount "$P1" "$OUT/pd"
 dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
 cp "$OUT/casper-n220.img" "$OUT/pd/casper-n220.img"
+echo "payload partition contents (host):"
+ls -la "$OUT/pd/"
+sync
 umount "$OUT/pd"
 losetup -d "$LOOP"
 rm -rf "$OUT/pd"
+echo "payload disk size: $(stat -c %s "$OUT/payload.disk")"
 
 # ── blank target disk ──────────────────────────────────────────────────────
 truncate -s 2G "$OUT/target.disk"
