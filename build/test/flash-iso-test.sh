@@ -47,6 +47,7 @@ sleep 1
 P1="${LOOP}p1"
 [ -e "$P1" ] || P1="${LOOP}1"
 mkfs.exfat -n PAYLOAD "$P1" >/dev/null
+modprobe exfat 2>/dev/null || true
 mkdir -p "$OUT/pd"
 mount "$P1" "$OUT/pd"
 dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
