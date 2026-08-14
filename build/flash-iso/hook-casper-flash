@@ -110,8 +110,9 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
         $BB umount /mnt 2>/dev/null || true
         if [ "$rc_ul" = 0 ] || [ "$rc_bb" = 0 ]; then
             msg "mounted $part"
-            msg "  mnt: $(cat /proc/mounts 2>/dev/null | grep "$part" | tr '\n' ' ')"
-            msg "  ls: $($BB ls /mnt 2>&1 | tr '\n' ' ')"
+            msg "  all mounts: $(cat /proc/mounts 2>/dev/null | tr '\n' ' ')"
+            msg "  ls: $($BB ls -la /mnt 2>&1 | tr '\n' ' ')"
+            msg "  fatname search: $($BB dd if="$part" bs=512 count=128 2>/dev/null | $BB grep -a -o 'CASPER~1\|casper-n220' | head -1 | tr '\n' ' ')"
             msg "  du: $($BB du -k /mnt 2>&1 | tail -1 | tr '\n' ' ')"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
