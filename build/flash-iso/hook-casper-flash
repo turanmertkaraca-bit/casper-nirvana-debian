@@ -105,10 +105,11 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
     for part in "$disk"[0-9]*; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
-        rm -f /tmp/mterr
-        if $MOUNT -t auto -o ro "$part" /mnt 2>/tmp/mterr || \
-           $MOUNT -t vfat -o ro "$part" /mnt 2>>/tmp/mterr || \
-           $MOUNT -t exfat -o ro "$part" /mnt 2>>/tmp/mterr; then
+        e_ul=$($MOUNT -t vfat -o ro "$part" /mnt 2>&1); rc_ul=$?
+        $BB umount /mnt 2>/dev/null || true
+        e_bb=$($BB mount -t vfat -o ro "$part" /mnt 2>&1); rc_bb=$?
+        $BB umount /mnt 2>/dev/null || true
+        if [ "$rc_ul" = 0 ] || [ "$rc_bb" = 0 ]; then
             msg "mounted $part"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
@@ -119,7 +120,10 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
             msg "  (no casper-n220.img on $part)"
             $BB umount /mnt 2>/dev/null
         else
-            msg "mount failed on $part: $(head -1 /tmp/mterr 2>/dev/null)"
+            msg "mount vfat on $part failed: util-linux(rc=$rc_ul): $e_ul | busybox(rc=$rc_bb): $e_bb"
+            e_x=$($MOUNT -t exfat -o ro "$part" /mnt 2>&1); rc_x=$?
+            [ "$rc_x" = 0 ] && { msg "mounted $part (exfat)"; } || msg "  exfat also failed(rc=$rc_x): $e_x"
+            $BB umount /mnt 2>/dev/null || true
         fi
     done
 done
