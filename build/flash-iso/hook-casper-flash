@@ -92,13 +92,17 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
         if $BB mount -t auto -o ro "$part" /mnt 2>/dev/null || \
            $BB mount -t exfat -o ro "$part" /mnt 2>/dev/null || \
            $BB mount -t vfat  -o ro "$part" /mnt 2>/dev/null; then
+            msg "mounted $part"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
                 SRCDISK="$disk"
                 msg "payload found on $part ($($BB stat -c %s "$PAYLOAD") bytes)"
                 break 2
             fi
+            msg "  (no casper-n220.img on $part)"
             $BB umount /mnt 2>/dev/null
+        else
+            msg "mount failed on $part"
         fi
     done
 done
