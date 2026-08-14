@@ -84,8 +84,10 @@ msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' '
 msg "sda dev: $(ls -l /dev/sda /dev/sda1 2>/dev/null | awk '{print $5, $6, $10}' | tr '\n' ' ')"
 msg "sda size: $(cat /sys/block/sda/size 2>/dev/null)"
 msg "sda read: $($BB dd if=/dev/sda bs=512 count=1 2>&1 | head -2 | tr '\n' ' ')"
+msg "sda1 read: $($BB dd if=/dev/sda1 bs=512 count=1 2>&1 | head -2 | tr '\n' ' ')"
 msg "lba2048 read: $($BB dd if=/dev/sda bs=512 skip=2048 count=1 2>&1 | head -2 | tr '\n' ' ')"
-msg "kernel io errors: $(dmesg 2>/dev/null | grep -iE 'I/O error|end_request|buffer I/O|sda1|blk_update' | tail -4 | tr '\n' ' ')"
+msg "proc parts: $(cat /proc/partitions 2>/dev/null | tr '\n' ' ')"
+msg "kernel io errors: $(dmesg 2>/dev/null | grep -iE 'I/O error|end_request|buffer I/O|blk_update|ata[0-9]' | tail -5 | tr '\n' ' ')"
 for p in /dev/sd*[0-9]* /dev/mmcblk*[0-9]*; do
     [ -b "$p" ] || continue
     msg "od $p: $($BB dd if="$p" bs=512 count=1 2>/dev/null | $BB od -A d -t x1z -N 16 | head -1 | tr '\n' ' ')"
