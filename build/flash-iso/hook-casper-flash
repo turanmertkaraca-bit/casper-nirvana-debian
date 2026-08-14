@@ -62,6 +62,11 @@ for try in 1 2 3 4 5; do
     $BB sleep 2
 done
 msg "disks present:${DEVS:- none}"
+# opening a disk triggers the kernel's lazy partition scan (no udev here)
+for d in $DEVS; do
+    $BB dd if="/dev/$d" of=/dev/null bs=512 count=1 2>/dev/null
+done
+$BB sleep 2
 msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' ')"
 
 msg "scanning disks for casper-n220.img..."
