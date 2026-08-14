@@ -104,7 +104,7 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
     for part in "$disk"[0-9]*; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
-        e_ul=$($MOUNT -t vfat -o ro "$part" /mnt 2>&1); rc_ul=$?
+        e_ul=$($MOUNT -t exfat -o ro "$part" /mnt 2>&1); rc_ul=$?
         $BB umount /mnt 2>/dev/null || true
         e_bb=$($BB mount -t vfat -o ro "$part" /mnt 2>&1); rc_bb=$?
         $BB umount /mnt 2>/dev/null || true

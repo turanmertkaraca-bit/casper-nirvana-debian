@@ -46,8 +46,8 @@ partprobe "$LOOP" 2>/dev/null || true
 sleep 1
 P1="${LOOP}p1"
 [ -e "$P1" ] || P1="${LOOP}1"
-mkfs.exfat -n PAYLOAD "$P1" >/dev/null
-# write into the exfat without mounting (mtools; the runner kernel may lack exfat)
+mkfs.vfat -F 32 -n PAYLOAD "$P1" >/dev/null
+# write into the FAT without mounting (mtools)
 dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
 mcopy -i "$P1" "$OUT/casper-n220.img" ::casper-n220.img
 echo "payload partition contents (host, via mdir):"
