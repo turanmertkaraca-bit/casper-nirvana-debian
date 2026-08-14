@@ -31,6 +31,10 @@ $BB mount -t devpts devpts /dev/pts 2>/dev/null
 # kmod's modprobe handles compressed (.ko.xz) modules; busybox cannot.
 MODPROBE=/sbin/modprobe
 [ -x "$MODPROBE" ] || MODPROBE="$BB modprobe"
+# prefer util-linux mount (accurate errors); busybox as fallback
+MOUNT=/bin/mount
+[ -x "$MOUNT" ] || MOUNT="$BB mount"
+msg "filesystems: $(cat /proc/filesystems 2>/dev/null | tr '\n' ' ')"
 
 msg() { echo "casper-flash: $*"; }
 die() {
@@ -90,9 +94,9 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
         rm -f /tmp/mterr
-        if $BB mount -t vfat -o ro "$part" /mnt 2>/tmp/mterr || \
-           $BB mount -t exfat -o ro "$part" /mnt 2>>/tmp/mterr || \
-           $BB mount -t auto -o ro "$part" /mnt 2>>/tmp/mterr; then
+        if $MOUNT -t vfat -o ro "$part" /mnt 2>/tmp/mterr || \
+           $MOUNT -t exfat -o ro "$part" /mnt 2>>/tmp/mterr || \
+           $MOUNT -t auto -o ro "$part" /mnt 2>>/tmp/mterr; then
             msg "mounted $part"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
