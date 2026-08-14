@@ -22,6 +22,14 @@ cat > "${DESTDIR}/init" <<'INITEOF'
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 BB=/bin/busybox
 
+msg() { echo "casper-flash: $*"; }
+die() {
+    msg "FATAL: $*"
+    msg "Dropping to a shell. The image file must be named exactly"
+    msg "'casper-n220.img' on the USB stick (any filesystem)."
+    exec /bin/sh
+}
+
 $BB mkdir -p /proc /sys /dev /dev/pts /tmp /run /mnt
 $BB mount -t proc proc /proc 2>/dev/null
 $BB mount -t sysfs sysfs /sys 2>/dev/null
@@ -35,14 +43,6 @@ MODPROBE=/sbin/modprobe
 MOUNT=/bin/mount
 [ -x "$MOUNT" ] || MOUNT="$BB mount"
 msg "filesystems: $(cat /proc/filesystems 2>/dev/null | tr '\n' ' ')"
-
-msg() { echo "casper-flash: $*"; }
-die() {
-    msg "FATAL: $*"
-    msg "Dropping to a shell. The image file must be named exactly"
-    msg "'casper-n220.img' on the USB stick (any filesystem)."
-    exec /bin/sh
-}
 
 # filesystem + disk drivers (no udev here — we must load them ourselves)
 MPS=""
