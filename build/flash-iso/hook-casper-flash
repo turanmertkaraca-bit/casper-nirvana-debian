@@ -110,6 +110,7 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
         $BB umount /mnt 2>/dev/null || true
         if [ "$rc_ul" = 0 ] || [ "$rc_bb" = 0 ]; then
             msg "mounted $part"
+            msg "  ls: $($BB ls /mnt 2>&1 | tr '\n' ' ')"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
                 SRCDISK="$disk"
