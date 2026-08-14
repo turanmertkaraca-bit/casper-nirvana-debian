@@ -22,11 +22,15 @@ cat > "${DESTDIR}/init" <<'INITEOF'
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 BB=/bin/busybox
 
+$BB mkdir -p /proc /sys /dev /dev/pts
 $BB mount -t proc proc /proc 2>/dev/null
 $BB mount -t sysfs sysfs /sys 2>/dev/null
 $BB mount -t devtmpfs devtmpfs /dev 2>/dev/null
-$BB mkdir -p /dev/pts
 $BB mount -t devpts devpts /dev/pts 2>/dev/null
+
+# kmod's modprobe handles compressed (.ko.xz) modules; busybox cannot.
+MODPROBE=/sbin/modprobe
+[ -x "$MODPROBE" ] || MODPROBE="$BB modprobe"
 
 msg() { echo "casper-flash: $*"; }
 die() {
@@ -39,7 +43,7 @@ die() {
 # filesystem + disk drivers (no udev here — we must load them ourselves)
 MPS=""
 for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat ext4 isofs; do
-    e=$($BB modprobe "$m" 2>&1) || MPS="$MPS $m:$e"
+    e=$($MODPROBE "$m" 2>&1) || MPS="$MPS $m:$e"
 done
 [ -z "$MPS" ] || msg "modprobe issues:$MPS"
 msg "loaded: $(cat /proc/modules 2>/dev/null | grep -E 'ahci|libata|sd_mod|mmc' | tr '\n' ' ')"
