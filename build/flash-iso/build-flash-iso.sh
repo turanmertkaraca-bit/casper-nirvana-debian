@@ -82,7 +82,8 @@ menuentry "CasperOS Auto-Flash" {
 }
 GRUB
 
-umount -R "$ROOT" 2>/dev/null || umount -l "$ROOT"
+umount -R "$ROOT" 2>/dev/null || true
+umount -l "$ROOT" 2>/dev/null || true
 
 info "building hybrid ISO (BIOS + UEFI x64 + UEFI IA32)"
 grub-mkrescue -o "$OUT" "$ISODIR" -- -volid CASPER_FLASH -joliet on
