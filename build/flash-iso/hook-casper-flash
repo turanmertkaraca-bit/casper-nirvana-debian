@@ -42,6 +42,10 @@ for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat ext4 isofs; do
     e=$($BB modprobe "$m" 2>&1) || MPS="$MPS $m:$e"
 done
 [ -z "$MPS" ] || msg "modprobe issues:$MPS"
+msg "loaded: $(cat /proc/modules 2>/dev/null | grep -E 'ahci|libata|sd_mod|mmc' | tr '\n' ' ')"
+msg "ata mods: $(ls /lib/modules/*/kernel/drivers/ata/ 2>/dev/null | tr '\n' ' ')"
+msg "pci: $(ls /sys/bus/pci/devices/ 2>/dev/null | tr '\n' ' ')"
+msg "block: $(ls /sys/block 2>/dev/null | tr '\n' ' ')"
 
 msg "waiting for disks..."
 DEVS=""
