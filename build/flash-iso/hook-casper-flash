@@ -1,0 +1,117 @@
+#!/bin/sh
+# initramfs-tools hook: installs the CasperOS auto-flash /init.
+# Runs inside the flash-ISO chroot during update-initramfs.
+# The custom init replaces the default one entirely: no systemd, no root
+# mount — the initramfs itself is the whole environment.
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case $1 in
+    prereqs) prereqs; exit 0 ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+copy_exec /bin/busybox /bin
+copy_exec /bin/busybox /sbin/modprobe 2>/dev/null || true
+
+cat > "${DESTDIR}/init" <<'INITEOF'
+#!/bin/sh
+# CasperOS Auto-Flash — custom initramfs init.
+# Finds casper-n220.img on any attached disk partition, flashes the OTHER
+# disk, and reboots. No keyboard needed — 10 second countdown, auto-proceed.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+BB=/bin/busybox
+
+$BB mount -t proc proc /proc 2>/dev/null
+$BB mount -t sysfs sysfs /sys 2>/dev/null
+$BB mount -t devtmpfs devtmpfs /dev 2>/dev/null
+$BB mkdir -p /dev/pts
+$BB mount -t devpts devpts /dev/pts 2>/dev/null
+
+msg() { echo "casper-flash: $*"; }
+die() {
+    msg "FATAL: $*"
+    msg "Dropping to a shell. The image file must be named exactly"
+    msg "'casper-n220.img' on the USB stick (any filesystem)."
+    exec /bin/sh
+}
+
+# filesystem + disk drivers
+$BB modprobe exfat 2>/dev/null
+$BB modprobe vfat 2>/dev/null
+$BB modprobe fat 2>/dev/null
+$BB modprobe sd_mod 2>/dev/null
+$BB modprobe mmc_block 2>/dev/null
+$BB modprobe mmc_core 2>/dev/null
+$BB modprobe ext4 2>/dev/null
+$BB modprobe isofs 2>/dev/null
+
+msg "scanning disks for casper-n220.img..."
+$BB sleep 3
+
+PAYLOAD=""
+SRCDISK=""
+for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
+    [ -d "$d" ] || continue
+    disk="/dev/$(basename "$d")"
+    for part in "$disk"[0-9]*; do
+        [ -b "$part" ] || continue
+        $BB mkdir -p /mnt
+        if $BB mount -t auto -o ro "$part" /mnt 2>/dev/null || \
+           $BB mount -t exfat -o ro "$part" /mnt 2>/dev/null || \
+           $BB mount -t vfat  -o ro "$part" /mnt 2>/dev/null; then
+            if [ -f /mnt/casper-n220.img ]; then
+                PAYLOAD="/mnt/casper-n220.img"
+                SRCDISK="$disk"
+                msg "payload found on $part ($($BB stat -c %s "$PAYLOAD") bytes)"
+                break 2
+            fi
+            $BB umount /mnt 2>/dev/null
+        fi
+    done
+done
+
+[ -n "$PAYLOAD" ] || die "casper-n220.img not found on any disk partition"
+
+# target: exactly ONE other disk (cdrom sr* is never a candidate)
+TARGET=""
+for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
+    [ -d "$d" ] || continue
+    disk="/dev/$(basename "$d")"
+    [ "$disk" = "$SRCDISK" ] && continue
+    if [ -n "$TARGET" ]; then
+        die "multiple candidate disks ($TARGET and $disk) — remove the SD card / extra drives"
+    fi
+    TARGET="$disk"
+done
+[ -n "$TARGET" ] || die "no target disk found"
+
+PAYLOADSIZE=$($BB stat -c %s "$PAYLOAD")
+TARGETSIZE=$(( $(cat "/sys/block/$(basename "$TARGET")/size") * 512 ))
+[ "$TARGETSIZE" -ge "$PAYLOADSIZE" ] || die "target disk ($TARGET) is smaller than the image"
+
+msg "==================================================="
+msg "  INSTALLING CasperOS"
+msg "  source: $SRCDISK : $PAYLOAD"
+msg "  target: $TARGET ($TARGETSIZE bytes)"
+msg "  The target disk will be OVERWRITTEN."
+msg "  Remove the USB stick only after 'flash complete'."
+msg "==================================================="
+msg "flashing in 10 seconds..."
+$BB sleep 10
+msg "flashing $TARGET ..."
+if $BB dd if="$PAYLOAD" of="$TARGET" bs=4M conv=fsync 2>/dev/null; then
+    $BB sync
+    msg "flash complete — CasperOS installed."
+    msg "Remove the USB stick; rebooting in 5 seconds..."
+    $BB sleep 5
+    $BB reboot -f
+fi
+die "dd failed"
+INITEOF
+chmod 755 "${DESTDIR}/init"
+
+# ensure our fs/disk modules are in the initramfs
+for m in exfat vfat fat sd_mod mmc_block mmc_core ext4 isofs; do
+    echo "$m" >> "${DESTDIR}/conf/modules" 2>/dev/null || true
+done

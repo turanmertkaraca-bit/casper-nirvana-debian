@@ -93,3 +93,58 @@ jobs:
             --notes "CasperOS image for Casper Nirvana N220/N240. See README for flashing. \
             Split parts: download all casper-n220.img.xz.XX parts + sha256, then:
             \`cat casper-n220.img.xz.* | xz -dc > casper-n220.img\`"
+
+  flash-iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            mmdebstrap debootstrap debian-archive-keyring \
+            grub-common grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin \
+            xorriso mtools zip qemu-system-x86 qemu-utils ovmf
+          sudo ln -sf sid /usr/share/debootstrap/scripts/trixie 2>/dev/null || true
+
+      - name: Build the auto-flash ISO
+        run: |
+          sudo bash build/flash-iso/build-flash-iso.sh \
+            /tmp/flash-root /tmp/casper-flash.iso /tmp/casper-flash-esp.zip
+        timeout-minutes: 30
+
+      - name: Test the flash ISO (QEMU, 32-bit OVMF)
+        run: |
+          sudo bash build/test/flash-iso-test.sh \
+            /tmp/casper-flash.iso /tmp/flash-test
+        timeout-minutes: 20
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: casper-flash
+          path: |
+            /tmp/casper-flash.iso
+            /tmp/casper-flash-esp.zip
+            /tmp/flash-test/serial.log
+          retention-days: 30
+
+      - name: Attach to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # wait for the release to exist (created by the build job)
+          for i in $(seq 1 30); do
+            if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 20
+          done
+          gh release upload "${{ github.ref_name }}" \
+            /tmp/casper-flash.iso /tmp/casper-flash-esp.zip \
+            --repo "${{ github.repository }}" --clobber

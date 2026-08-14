@@ -42,30 +42,70 @@ Everything is baked in — nothing runs after first boot:
   Trail cannot hardware-decode; h264ify forces the H.264 stream the GPU
   actually decodes. Cap playback at ≤1080p/30fps.
 
-## Flashing (from the tablet's current Debian 12, or any Linux)
+## Flashing (no OS required — Ventoy USB stick)
 
-The image contains no personal data and gets a fresh machine-id on first
-boot. Partition table on the target eMMC is **replaced** — back up anything
-you need first.
+CasperOS is a **raw disk image** (not an ISO), so it isn't booted like a
+distro installer. The recommended path needs no keyboard and no terminal:
+
+### Recommended: auto-flash ISO on a Ventoy stick
+
+1. Download from the release:
+   - `casper-flash.iso` (the auto-flasher)
+   - `casper-n220.img.xz.00` + `casper-n220.img.xz.sha256` (the image)
+2. Decompress the image — it must sit on the stick as the **raw** file
+   named exactly `casper-n220.img` (your stick is exFAT, so >4 GB files
+   are fine):
+   ```bash
+   sha256sum -c casper-n220.img.xz.sha256
+   cat casper-n220.img.xz.00 | xz -dc > casper-n220.img
+   ```
+3. Copy **both** `casper-flash.iso` and `casper-n220.img` onto the stick's
+   main partition.
+4. Plug into the tablet, boot, and in the Ventoy menu select
+   **casper-flash.iso**. (Ventoy supports 32-bit UEFI since v1.0.30 — if
+   your Ventoy is older, update it first.)
+5. Watch the screen: it finds the image on the stick, shows a 10-second
+   countdown, flashes the internal eMMC, prints **"flash complete"**,
+   then reboots. Pull the stick during the countdown after that.
+
+The flasher only touches the **one internal disk** (anything that is not
+the USB stick / CD). If it sees more than one candidate (e.g. an SD card
+is inserted), it aborts to a shell instead of guessing — remove the SD
+card and reboot.
+
+### Fallback A: flash from within CasperOS booted from the stick
+
+If your Ventoy boots raw `.img` files directly (select `casper-n220.img`
+in the menu), CasperOS runs from the stick; then on the desktop:
+`sudo /usr/local/bin/casper-flash` — same result.
+
+### Fallback B: Debian netinst rescue shell
+
+Put `debian-13.x-amd64-netinst.iso` on the stick too (Debian's amd64
+ISOs include the 32-bit UEFI loader, so they boot on this tablet). Boot
+it → **Advanced options → Rescue mode** → shell, then:
 
 ```bash
-# 1. download the release parts (all casper-n220.img.xz.XX + .sha256)
-# 2. verify + reassemble:
-sha256sum -c casper-n220.img.xz.sha256
-cat casper-n220.img.xz.* | xz -dc > casper-n220.img
-
-# 3. identify the target disk (!!! double-check !!!)
-lsblk
-
-# 4. flash (replace /dev/mmcblk0 with your eMMC — this wipes it)
-sudo dd if=casper-n220.img of=/dev/mmcblk0 bs=4M status=progress conv=fsync
-sudo sync
+mkdir /mnt/s
+mount -t vfat /dev/sda1 /mnt/s   # find the stick partition with lsblk
+cat /mnt/s/casper-n220.img.xz.00 | xz -dc > /dev/mmcblk0
+sync; reboot
 ```
 
-Reboot. First boot is slower (partition resize) — after that it's the
-desktop straight off the splash. If the firmware lands in its setup menu
-instead of booting, just exit it — the removable `BOOTIA32.EFI` path gets
-picked up.
+### Fallback C: ESP kit (firmware that won't boot Ventoy at all)
+
+`casper-flash-esp.zip` contains a replacement `BOOTIA32.EFI` plus the
+kernel/initrd. Copy `BOOTIA32.EFI` over `/EFI/BOOT/BOOTIA32.EFI` on the
+stick's ESP partition (FAT32), put `vmlinuz`/`initrd.img` in a `flash/`
+folder on the data partition, and the tablet boots the flasher directly —
+no Ventoy menu involved.
+
+---
+
+**Important:** the image contains no personal data and gets a fresh
+machine-id on first boot. Partition table on the target eMMC is
+**replaced**. First boot is slower (partition resize); Secure Boot must be
+off (mainline kernels are unsigned).
 
 ## Boot menu / fallback kernel
 
