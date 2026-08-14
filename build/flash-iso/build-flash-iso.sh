@@ -43,9 +43,13 @@ mount --bind /dev "$ROOT/dev"
 mount --bind /dev/pts "$ROOT/dev/pts"
 
 cat > "$ROOT/etc/initramfs-tools/modules" <<'MODS'
+ahci
+ata_piix
 exfat
 vfat
 fat
+nls_cp437
+nls_ascii
 sd_mod
 mmc_block
 mmc_core

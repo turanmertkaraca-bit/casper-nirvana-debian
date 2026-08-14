@@ -46,7 +46,7 @@ msg "filesystems: $(cat /proc/filesystems 2>/dev/null | tr '\n' ' ')"
 
 # filesystem + disk drivers (no udev here — we must load them ourselves)
 MPS=""
-for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat ext4 isofs; do
+for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat nls_cp437 nls_ascii ext4 isofs; do
     e=$($MODPROBE "$m" 2>&1) || MPS="$MPS $m:$e"
 done
 [ -z "$MPS" ] || msg "modprobe issues:$MPS"
@@ -170,6 +170,6 @@ INITEOF
 chmod 755 "${DESTDIR}/init"
 
 # ensure our fs/disk modules are in the initramfs
-for m in ahci ata_piix exfat vfat fat sd_mod mmc_block mmc_core ext4 isofs; do
+for m in ahci ata_piix exfat vfat fat nls_cp437 nls_ascii sd_mod mmc_block mmc_core ext4 isofs; do
     echo "$m" >> "${DESTDIR}/conf/modules" 2>/dev/null || true
 done
