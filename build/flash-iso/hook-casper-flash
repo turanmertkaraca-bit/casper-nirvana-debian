@@ -83,9 +83,8 @@ $BB sleep 1
 msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' ')"
 msg "sda dev: $(ls -l /dev/sda /dev/sda1 2>/dev/null | awk '{print $5, $6, $10}' | tr '\n' ' ')"
 msg "sda size: $(cat /sys/block/sda/size 2>/dev/null)"
-msg "sda read: $($BB dd if=/dev/sda bs=512 count=1 2>&1 | head -2 | tr '\n' ' ')"
-msg "sda1 read: $($BB dd if=/dev/sda1 bs=512 count=1 2>&1 | head -2 | tr '\n' ' ')"
-msg "lba2048 read: $($BB dd if=/dev/sda bs=512 skip=2048 count=1 2>&1 | head -2 | tr '\n' ' ')"
+msg "sda read: $($BB dd if=/dev/sda bs=512 count=1 2>&1 | head -1 | tr -cd '[:print:]' | head -c 60)"
+msg "sda1 read: $($BB dd if=/dev/sda1 bs=512 count=1 2>&1 | head -1 | tr -cd '[:print:]' | head -c 60)"
 msg "proc parts: $(cat /proc/partitions 2>/dev/null | tr '\n' ' ')"
 msg "fatfs dmesg: $(dmesg 2>/dev/null | grep -iE 'FAT-fs|vfat|exfat|sda1' | tail -6 | tr '\n' ' ')"
 msg "kernel io errors: $(dmesg 2>/dev/null | grep -iE 'I/O error|end_request|buffer I/O|blk_update|ata[0-9]' | tail -3 | tr '\n' ' ')"
@@ -124,6 +123,7 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
             e_x=$($MOUNT -t exfat -o ro "$part" /mnt 2>&1); rc_x=$?
             [ "$rc_x" = 0 ] && { msg "mounted $part (exfat)"; } || msg "  exfat also failed(rc=$rc_x): $e_x"
             $BB umount /mnt 2>/dev/null || true
+            msg "post-mount fs dmesg: $(dmesg 2>/dev/null | grep -iE 'FAT-fs|exFAT|vfat|fuse' | tail -3 | tr '\n' ' ')"
         fi
     done
 done
