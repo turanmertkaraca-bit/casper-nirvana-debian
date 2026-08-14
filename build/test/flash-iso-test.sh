@@ -73,7 +73,7 @@ qemu-system-x86_64 \
     > "$OUT/qemu.log" 2>&1 &
 QPID=$!
 
-python3 "$SRC/test/qemu-wait.py" "$OUT/ser.sock" "flash complete" 600 \
+python3 "$SRC/test/qemu-wait.py" "$OUT/ser.sock" "CASPER_FLASH_DONE" 600 \
     > "$OUT/serial.log" 2>&1 || true
 
 # capture what the display shows (init messages land on tty0)
@@ -95,7 +95,7 @@ pass=0; fail=0
 chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
 chk "$(grep -q 'casper-flash: payload found' "$OUT/serial.log" && echo 1 || echo 0)" "payload located on source disk"
 chk "$(grep -q 'flashing /dev/sdb' "$OUT/serial.log" && echo 1 || echo 0)" "target selected (the other disk)"
-chk "$(grep -q 'flash complete' "$OUT/serial.log" && echo 1 || echo 0)" "flash completed"
+chk "$(grep -q 'CASPER_FLASH_DONE' "$OUT/serial.log" && echo 1 || echo 0)" "flash completed"
 chk "$(grep -q 'FATAL' "$OUT/serial.log" && echo 0 || echo 1)" "no fatal errors"
 
 # target first 200MB must be byte-identical to the payload
