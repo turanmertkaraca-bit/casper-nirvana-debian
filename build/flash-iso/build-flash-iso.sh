@@ -101,7 +101,7 @@ insmod part_gpt
 linux /flash/vmlinuz root=/dev/ram0 rw quiet console=ttyS0,115200 console=tty0
 initrd /flash/initrd.img
 GRUB
-grub-mkimage -O i386-efi -c /tmp/esp-kit-grub.cfg \
+grub-mkimage -O i386-efi -p /boot/grub -c /tmp/esp-kit-grub.cfg \
     -o "$KITDIR/BOOTIA32.EFI" \
     ext2 exfat vfat part_gpt part_msdos iso9660 search search_fs_file linux normal font
 cp "$VMLINUZ" "$KITDIR/vmlinuz"
