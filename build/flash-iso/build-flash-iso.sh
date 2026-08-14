@@ -7,7 +7,7 @@
 #
 # Usage: sudo ./build-flash-iso.sh [root-dir] [out.iso]
 set -euo pipefail
-SRC="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 ROOT="${1:-/tmp/flash-root}"
 OUT="${2:-/tmp/casper-flash.iso}"
 KIT="${3:-/tmp/casper-flash-esp.zip}"
