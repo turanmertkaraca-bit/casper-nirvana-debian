@@ -36,20 +36,28 @@ die() {
     exec /bin/sh
 }
 
-# filesystem + disk drivers
-$BB modprobe ahci 2>/dev/null
-$BB modprobe ata_piix 2>/dev/null
-$BB modprobe sd_mod 2>/dev/null
-$BB modprobe mmc_block 2>/dev/null
-$BB modprobe mmc_core 2>/dev/null
-$BB modprobe exfat 2>/dev/null
-$BB modprobe vfat 2>/dev/null
-$BB modprobe fat 2>/dev/null
-$BB modprobe ext4 2>/dev/null
-$BB modprobe isofs 2>/dev/null
+# filesystem + disk drivers (no udev here — we must load them ourselves)
+MPS=""
+for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat ext4 isofs; do
+    e=$($BB modprobe "$m" 2>&1) || MPS="$MPS $m:$e"
+done
+[ -z "$MPS" ] || msg "modprobe issues:$MPS"
+
+msg "waiting for disks..."
+DEVS=""
+for try in 1 2 3 4 5; do
+    DEVS=""
+    for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
+        [ -d "$d" ] && DEVS="$DEVS $(basename "$d")"
+    done
+    [ -n "$DEVS" ] && break
+    $BB sleep 2
+done
+msg "disks present:${DEVS:- none}"
+msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' ')"
 
 msg "scanning disks for casper-n220.img..."
-$BB sleep 3
+$BB sleep 2
 
 PAYLOAD=""
 SRCDISK=""
