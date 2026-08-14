@@ -37,12 +37,14 @@ die() {
 }
 
 # filesystem + disk drivers
-$BB modprobe exfat 2>/dev/null
-$BB modprobe vfat 2>/dev/null
-$BB modprobe fat 2>/dev/null
+$BB modprobe ahci 2>/dev/null
+$BB modprobe ata_piix 2>/dev/null
 $BB modprobe sd_mod 2>/dev/null
 $BB modprobe mmc_block 2>/dev/null
 $BB modprobe mmc_core 2>/dev/null
+$BB modprobe exfat 2>/dev/null
+$BB modprobe vfat 2>/dev/null
+$BB modprobe fat 2>/dev/null
 $BB modprobe ext4 2>/dev/null
 $BB modprobe isofs 2>/dev/null
 
@@ -112,6 +114,6 @@ INITEOF
 chmod 755 "${DESTDIR}/init"
 
 # ensure our fs/disk modules are in the initramfs
-for m in exfat vfat fat sd_mod mmc_block mmc_core ext4 isofs; do
+for m in ahci ata_piix exfat vfat fat sd_mod mmc_block mmc_core ext4 isofs; do
     echo "$m" >> "${DESTDIR}/conf/modules" 2>/dev/null || true
 done

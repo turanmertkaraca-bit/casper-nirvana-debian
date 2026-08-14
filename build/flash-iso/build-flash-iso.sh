@@ -77,7 +77,7 @@ cat > "$ISODIR/boot/grub/grub.cfg" <<'GRUB'
 set timeout=3
 set default=0
 menuentry "CasperOS Auto-Flash" {
-    linux /boot/vmlinuz root=/dev/ram0 rw quiet console=ttyS0,115200 console=tty0
+    linux /boot/vmlinuz root=/dev/ram0 rw quiet console=tty0 console=ttyS0,115200
     initrd /boot/initrd.img
 }
 GRUB
@@ -98,7 +98,7 @@ search --no-floppy --set=root --file /flash/vmlinuz
 insmod exfat
 insmod vfat
 insmod part_gpt
-linux /flash/vmlinuz root=/dev/ram0 rw quiet console=ttyS0,115200 console=tty0
+linux /flash/vmlinuz root=/dev/ram0 rw quiet console=tty0 console=ttyS0,115200
 initrd /flash/initrd.img
 GRUB
 grub-mkimage -O i386-efi -p /boot/grub -c /tmp/esp-kit-grub.cfg \

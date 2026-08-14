@@ -62,6 +62,7 @@ qemu-system-x86_64 \
     -drive if=pflash,format=raw,file="$OUT/vars.fd" \
     -chardev socket,id=ser,path="$OUT/ser.sock",server=on,wait=off \
     -serial chardev:ser \
+    -monitor tcp:127.0.0.1:45456,server=on,wait=off \
     -display none -vga std -no-reboot \
     > "$OUT/qemu.log" 2>&1 &
 QPID=$!
@@ -69,12 +70,19 @@ QPID=$!
 python3 "$SRC/test/qemu-wait.py" "$OUT/ser.sock" "flash complete" 600 \
     > "$OUT/serial.log" 2>&1 || true
 
+# capture what the display shows (init messages land on tty0)
+exec 3<>/dev/tcp/127.0.0.1/45456 2>/dev/null || true
+echo "screendump $OUT/screen.ppm" >&3 2>/dev/null || true
+sleep 1
+exec 3>&- 2>/dev/null || true
+
 sleep 2
 kill "$QPID" 2>/dev/null || true
 wait "$QPID" 2>/dev/null || true
 
 echo "--- serial log:"
 cat "$OUT/serial.log"
+echo "--- screen capture: $(ppm_visible "$OUT/screen.ppm" 2>/dev/null || echo none)"
 
 # ── verdicts ───────────────────────────────────────────────────────────────
 pass=0; fail=0
