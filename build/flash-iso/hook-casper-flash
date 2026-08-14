@@ -81,6 +81,11 @@ $BB cat /proc/partitions 2>/dev/null | while read maj min blk name; do
 done
 $BB sleep 1
 msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' ')"
+for p in /dev/sd*[0-9]* /dev/mmcblk*[0-9]*; do
+    [ -b "$p" ] || continue
+    msg "od $p: $($BB dd if="$p" bs=512 count=1 2>/dev/null | $BB od -A d -t x1z -N 16 | head -1 | tr '\n' ' ')"
+done
+msg "mbr: $($BB dd if=/dev/sda bs=512 count=1 2>/dev/null | $BB od -A d -t x1z -N 32 | head -2 | tr '\n' ' ')"
 
 msg "scanning disks for casper-n220.img..."
 $BB sleep 2
@@ -94,9 +99,9 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
         rm -f /tmp/mterr
-        if $MOUNT -t vfat -o ro "$part" /mnt 2>/tmp/mterr || \
-           $MOUNT -t exfat -o ro "$part" /mnt 2>>/tmp/mterr || \
-           $MOUNT -t auto -o ro "$part" /mnt 2>>/tmp/mterr; then
+        if $MOUNT -t auto -o ro "$part" /mnt 2>/tmp/mterr || \
+           $MOUNT -t vfat -o ro "$part" /mnt 2>>/tmp/mterr || \
+           $MOUNT -t exfat -o ro "$part" /mnt 2>>/tmp/mterr; then
             msg "mounted $part"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
