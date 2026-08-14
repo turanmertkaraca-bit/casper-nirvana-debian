@@ -36,7 +36,8 @@ fi
 cp -f "$FVARS" "$OUT/vars.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars.fd"
 echo "firmware: $FCODE"
 
-# ── payload disk: 300MB, msdos partition table + vfat partition ────────────
+# ── payload disk: 300MB, msdos partition table + exfat partition ───────────
+# (exFAT = the real Ventoy stick format; vfat is quirky in this minimal env)
 truncate -s 300M "$OUT/payload.disk"
 LOOP=$(losetup -f)
 losetup "$LOOP" "$OUT/payload.disk"
@@ -45,7 +46,7 @@ partprobe "$LOOP" 2>/dev/null || true
 sleep 1
 P1="${LOOP}p1"
 [ -e "$P1" ] || P1="${LOOP}1"
-mkfs.vfat -n PAYLOAD "$P1" >/dev/null
+mkfs.exfat -n PAYLOAD "$P1" >/dev/null
 mkdir -p "$OUT/pd"
 mount "$P1" "$OUT/pd"
 dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
