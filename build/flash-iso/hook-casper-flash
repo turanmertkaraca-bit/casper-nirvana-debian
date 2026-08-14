@@ -123,7 +123,8 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
             e_x=$($MOUNT -t exfat -o ro "$part" /mnt 2>&1); rc_x=$?
             [ "$rc_x" = 0 ] && { msg "mounted $part (exfat)"; } || msg "  exfat also failed(rc=$rc_x): $e_x"
             $BB umount /mnt 2>/dev/null || true
-            msg "post-mount fs dmesg: $(dmesg 2>/dev/null | grep -iE 'FAT-fs|exFAT|vfat|fuse' | tail -3 | tr '\n' ' ')"
+            msg "post-mount fs dmesg: $(dmesg 2>/dev/null | grep -iE 'FAT-fs|exFAT|vfat|fuse|disagrees|module' | tail -4 | tr '\n' ' ')"
+            msg "post-mount filesystems: $(cat /proc/filesystems 2>/dev/null | tr '\n' ' ')"
         fi
     done
 done
