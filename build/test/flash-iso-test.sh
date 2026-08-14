@@ -47,17 +47,12 @@ sleep 1
 P1="${LOOP}p1"
 [ -e "$P1" ] || P1="${LOOP}1"
 mkfs.exfat -n PAYLOAD "$P1" >/dev/null
-modprobe exfat 2>/dev/null || true
-mkdir -p "$OUT/pd"
-mount "$P1" "$OUT/pd"
+# write into the exfat without mounting (mtools; the runner kernel may lack exfat)
 dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
-cp "$OUT/casper-n220.img" "$OUT/pd/casper-n220.img"
-echo "payload partition contents (host):"
-ls -la "$OUT/pd/"
-sync
-umount "$OUT/pd"
+mcopy -i "$P1" "$OUT/casper-n220.img" ::casper-n220.img
+echo "payload partition contents (host, via mdir):"
+mdir -i "$P1" | tail -5
 losetup -d "$LOOP"
-rm -rf "$OUT/pd"
 echo "payload disk size: $(stat -c %s "$OUT/payload.disk")"
 
 # ── blank target disk ──────────────────────────────────────────────────────
