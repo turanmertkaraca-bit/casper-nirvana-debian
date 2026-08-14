@@ -46,7 +46,7 @@ for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat ext4 isofs; do
     e=$($MODPROBE "$m" 2>&1) || MPS="$MPS $m:$e"
 done
 [ -z "$MPS" ] || msg "modprobe issues:$MPS"
-msg "loaded: $(cat /proc/modules 2>/dev/null | grep -E 'ahci|libata|sd_mod|mmc' | tr '\n' ' ')"
+msg "loaded: $(cat /proc/modules 2>/dev/null | grep -E 'ahci|libata|sd_mod|mmc|vfat|fat|exfat|ext4' | tr '\n' ' ')"
 msg "ata mods: $(ls /lib/modules/*/kernel/drivers/ata/ 2>/dev/null | tr '\n' ' ')"
 msg "pci: $(ls /sys/bus/pci/devices/ 2>/dev/null | tr '\n' ' ')"
 msg "block: $(ls /sys/block 2>/dev/null | tr '\n' ' ')"
@@ -89,9 +89,10 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
     for part in "$disk"[0-9]*; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
-        if $BB mount -t auto -o ro "$part" /mnt 2>/dev/null || \
-           $BB mount -t exfat -o ro "$part" /mnt 2>/dev/null || \
-           $BB mount -t vfat  -o ro "$part" /mnt 2>/dev/null; then
+        rm -f /tmp/mterr
+        if $BB mount -t vfat -o ro "$part" /mnt 2>/tmp/mterr || \
+           $BB mount -t exfat -o ro "$part" /mnt 2>>/tmp/mterr || \
+           $BB mount -t auto -o ro "$part" /mnt 2>>/tmp/mterr; then
             msg "mounted $part"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
@@ -102,7 +103,7 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
             msg "  (no casper-n220.img on $part)"
             $BB umount /mnt 2>/dev/null
         else
-            msg "mount failed on $part"
+            msg "mount failed on $part: $(head -1 /tmp/mterr 2>/dev/null)"
         fi
     done
 done
