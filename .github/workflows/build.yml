@@ -196,15 +196,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          echo "ref: ${{ github.ref }}"
+          ls -la /tmp/casper-flash.iso.xz.* /tmp/casper-flash-esp.zip 2>/dev/null || true
           # wait for the release to exist (created by the build job)
           for i in $(seq 1 30); do
             if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "release visible"
               break
             fi
             sleep 20
           done
-          # upload each file with retries (the big ones can be flaky)
+          # upload each file with retries (the big ones can be flaky);
+          # fail loudly if there is nothing to upload
+          N=0
           for f in /tmp/casper-flash.iso.xz.* /tmp/casper-flash-esp.zip; do
+            [ -f "$f" ] || continue
+            N=$((N+1))
             for i in $(seq 1 5); do
               echo "uploading $f (attempt $i)"
               gh release upload "${{ github.ref_name }}" "$f" \
@@ -212,3 +219,6 @@ jobs:
               sleep 30
             done
           done
+          [ "$N" -gt 0 ] || { echo "ERROR: no files to upload"; exit 1; }
+          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+            --json assets --jq '[.assets[].name] | join(", ")'
