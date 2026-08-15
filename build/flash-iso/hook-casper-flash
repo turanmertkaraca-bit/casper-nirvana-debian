@@ -17,16 +17,17 @@ copy_exec /bin/busybox /sbin/modprobe 2>/dev/null || true
 cat > "${DESTDIR}/init" <<'INITEOF'
 #!/bin/sh
 # CasperOS Auto-Flash — custom initramfs init.
-# Finds casper-n220.img on any attached disk partition, flashes the OTHER
-# disk, and reboots. No keyboard needed — 10 second countdown, auto-proceed.
+# Finds casper-n220.img (on a disk partition OR embedded in the flash ISO
+# itself), flashes the internal eMMC, and reboots. No keyboard needed —
+# 10 second countdown, auto-proceed.
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 BB=/bin/busybox
 
 msg() { echo "casper-flash: $*"; }
 die() {
     msg "FATAL: $*"
-    msg "Dropping to a shell. The image file must be named exactly"
-    msg "'casper-n220.img' on the USB stick (any filesystem)."
+    msg "Dropping to a shell. The image must be named exactly"
+    msg "'casper-n220.img' — inside this ISO or on the USB stick."
     exec /bin/sh
 }
 
@@ -42,30 +43,27 @@ MODPROBE=/sbin/modprobe
 # prefer util-linux mount (accurate errors); busybox as fallback
 MOUNT=/bin/mount
 [ -x "$MOUNT" ] || MOUNT="$BB mount"
-msg "filesystems: $(cat /proc/filesystems 2>/dev/null | tr '\n' ' ')"
 
-# filesystem + disk drivers (no udev here — we must load them ourselves)
+# drivers: disks, optical, SD/eMMC, filesystems
 MPS=""
-for m in ahci ata_piix sd_mod mmc_block mmc_core exfat vfat fat nls_cp437 nls_ascii ext4 isofs; do
+for m in ahci ata_piix sd_mod sr_mod mmc_block mmc_core sdhci sdhci-pci \
+         exfat vfat fat nls_cp437 nls_ascii ext4 isofs; do
     e=$($MODPROBE "$m" 2>&1) || MPS="$MPS $m:$e"
 done
 [ -z "$MPS" ] || msg "modprobe issues:$MPS"
-msg "loaded: $(cat /proc/modules 2>/dev/null | grep -E 'ahci|libata|sd_mod|mmc|vfat|fat|exfat|ext4' | tr '\n' ' ')"
-msg "ata mods: $(ls /lib/modules/*/kernel/drivers/ata/ 2>/dev/null | tr '\n' ' ')"
-msg "pci: $(ls /sys/bus/pci/devices/ 2>/dev/null | tr '\n' ' ')"
-msg "block: $(ls /sys/block 2>/dev/null | tr '\n' ' ')"
 
 msg "waiting for disks..."
 DEVS=""
 for try in 1 2 3 4 5; do
     DEVS=""
-    for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
+    for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9] /sys/block/sr[0-9]; do
         [ -d "$d" ] && DEVS="$DEVS $(basename "$d")"
     done
     [ -n "$DEVS" ] && break
     $BB sleep 2
 done
-msg "disks present:${DEVS:- none}"
+msg "devices present:${DEVS:- none}"
+
 # opening a disk triggers the kernel's lazy partition scan (no udev here)
 for d in $DEVS; do
     $BB dd if="/dev/$d" of=/dev/null bs=512 count=1 2>/dev/null
@@ -80,67 +78,67 @@ $BB cat /proc/partitions 2>/dev/null | while read maj min blk name; do
     esac
 done
 $BB sleep 1
-msg "partitions:$(ls /dev/sd*[0-9]* /dev/mmcblk*[0-9]* 2>/dev/null | tr '\n' ' ')"
-msg "sda dev: $(ls -l /dev/sda /dev/sda1 2>/dev/null | awk '{print $5, $6, $10}' | tr '\n' ' ')"
-msg "sda size: $(cat /sys/block/sda/size 2>/dev/null)"
-msg "sda read: $($BB dd if=/dev/sda bs=512 count=1 2>&1 | head -1 | tr -cd '[:print:]' | head -c 60)"
-msg "sda1 read: $($BB dd if=/dev/sda1 bs=512 count=1 2>&1 | head -1 | tr -cd '[:print:]' | head -c 60)"
-msg "proc parts: $(cat /proc/partitions 2>/dev/null | tr '\n' ' ')"
-msg "fatfs dmesg: $(dmesg 2>/dev/null | grep -iE 'FAT-fs|vfat|exfat|sda1' | tail -6 | tr '\n' ' ')"
-msg "kernel io errors: $(dmesg 2>/dev/null | grep -iE 'I/O error|end_request|buffer I/O|blk_update|ata[0-9]' | tail -3 | tr '\n' ' ')"
-for p in /dev/sd*[0-9]* /dev/mmcblk*[0-9]*; do
-    [ -b "$p" ] || continue
-    msg "od $p: $($BB dd if="$p" bs=512 count=1 2>/dev/null | $BB od -A d -t x1z -N 16 | head -1 | tr '\n' ' ')"
-done
-
-msg "scanning disks for casper-n220.img..."
-$BB sleep 2
 
 PAYLOAD=""
 SRCDISK=""
+
+# ── 1. search disk partitions (e.g. the USB stick's exFAT) ─────────────────
+msg "scanning disk partitions for casper-n220.img..."
 for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
     [ -d "$d" ] || continue
     disk="/dev/$(basename "$d")"
     for part in "$disk"[0-9]*; do
         [ -b "$part" ] || continue
         $BB mkdir -p /mnt
-        out_ul=$($MOUNT -t exfat -o ro "$part" /mnt 2>&1); rc_ul=$?
-        $BB umount /mnt 2>/dev/null || true
-        out_bb=$($BB mount -t vfat -o ro "$part" /mnt 2>&1); rc_bb=$?
-        if grep -q "$part" /proc/mounts 2>/dev/null; then
+        if $MOUNT -t exfat -o ro "$part" /mnt 2>/dev/null || \
+           $BB mount -t vfat  -o ro "$part" /mnt 2>/dev/null || \
+           $MOUNT -t vfat  -o ro "$part" /mnt 2>/dev/null; then
             msg "mounted $part"
-            msg "  all mounts: $(cat /proc/mounts 2>/dev/null | tr '\n' ' ')"
-            msg "  ls: $($BB ls -la /mnt 2>&1 | tr '\n' ' ')"
-            msg "  fatname search: $($BB dd if="$part" bs=512 count=128 2>/dev/null | $BB grep -a -o 'CASPER~1\|casper-n220' | head -1 | tr '\n' ' ')"
-            msg "  du: $($BB du -k /mnt 2>&1 | tail -1 | tr '\n' ' ')"
             if [ -f /mnt/casper-n220.img ]; then
                 PAYLOAD="/mnt/casper-n220.img"
                 SRCDISK="$disk"
                 msg "payload found on $part ($($BB stat -c %s "$PAYLOAD") bytes)"
                 break 2
             fi
-            msg "  (no casper-n220.img on $part)"
             $BB umount /mnt 2>/dev/null
-        else
-            msg "mount attempts on $part: exfat(rc=$rc_ul): $out_ul | vfat(rc=$rc_bb): $out_bb"
         fi
     done
 done
 
-[ -n "$PAYLOAD" ] || die "casper-n220.img not found on any disk partition"
+# ── 2. search the flash ISO itself (self-contained flow) ───────────────────
+if [ -z "$PAYLOAD" ]; then
+    msg "scanning optical drives for casper-n220.img..."
+    for cd in /dev/sr?; do
+        [ -b "$cd" ] || continue
+        $BB mkdir -p /mnt
+        if $MOUNT -t iso9660 -o ro "$cd" /mnt 2>/dev/null || \
+           $BB mount -t iso9660 -o ro "$cd" /mnt 2>/dev/null; then
+            msg "mounted $cd"
+            if [ -f /mnt/casper-n220.img ]; then
+                PAYLOAD="/mnt/casper-n220.img"
+                SRCDISK="$cd"
+                msg "payload found on $cd ($($BB stat -c %s "$PAYLOAD") bytes)"
+                break
+            fi
+            msg "  (no casper-n220.img on $cd)"
+        fi
+    done
+fi
 
-# target: exactly ONE other disk (cdrom sr* is never a candidate)
+[ -n "$PAYLOAD" ] || die "casper-n220.img not found (not on the stick, not in the ISO)"
+
+# ── 3. target: exactly ONE internal eMMC/SD disk (the stick is USB/CD) ─────
 TARGET=""
-for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
+for d in /sys/block/mmcblk[0-9]; do
     [ -d "$d" ] || continue
     disk="/dev/$(basename "$d")"
     [ "$disk" = "$SRCDISK" ] && continue
     if [ -n "$TARGET" ]; then
-        die "multiple candidate disks ($TARGET and $disk) — remove the SD card / extra drives"
+        die "multiple internal disks ($TARGET and $disk) — remove the SD card / extra drives"
     fi
     TARGET="$disk"
 done
-[ -n "$TARGET" ] || die "no target disk found"
+[ -n "$TARGET" ] || die "no internal (eMMC) target disk found"
 
 PAYLOADSIZE=$($BB stat -c %s "$PAYLOAD")
 TARGETSIZE=$(( $(cat "/sys/block/$(basename "$TARGET")/size") * 512 ))
@@ -168,6 +166,7 @@ INITEOF
 chmod 755 "${DESTDIR}/init"
 
 # ensure our fs/disk modules are in the initramfs
-for m in ahci ata_piix exfat vfat fat nls_cp437 nls_ascii sd_mod mmc_block mmc_core ext4 isofs; do
+for m in ahci ata_piix sd_mod sr_mod mmc_block mmc_core sdhci sdhci-pci \
+         exfat vfat fat nls_cp437 nls_ascii ext4 isofs; do
     echo "$m" >> "${DESTDIR}/conf/modules" 2>/dev/null || true
 done

@@ -44,34 +44,40 @@ Everything is baked in — nothing runs after first boot:
 
 ## Flashing (no OS required — Ventoy USB stick)
 
-CasperOS is a **raw disk image** (not an ISO), so it isn't booted like a
-distro installer. The recommended path needs no keyboard and no terminal:
+CasperOS is a **raw disk image**, so it isn't booted like a distro installer.
+The recommended path needs no keyboard and no terminal — and only **one
+file** on the stick:
 
-### Recommended: auto-flash ISO on a Ventoy stick
+### Recommended: self-contained flash ISO on a Ventoy stick
 
 1. Download from the release:
-   - `casper-flash.iso` (the auto-flasher)
-   - `casper-n220.img.xz.00` + `casper-n220.img.xz.sha256` (the image)
-2. Decompress the image — it must sit on the stick as the **raw** file
-   named exactly `casper-n220.img` (your stick is exFAT, so >4 GB files
-   are fine):
+   - `casper-flash.iso.xz.00` + `casper-flash.iso.xz.sha256`
+     (the flash ISO **with the CasperOS image already inside**)
+   - `casper-flash-esp.zip` (only needed as a fallback, see below)
+2. Decompress to the raw ISO (needs ~7 GB free — phone or PC):
    ```bash
-   sha256sum -c casper-n220.img.xz.sha256
-   cat casper-n220.img.xz.00 | xz -dc > casper-n220.img
+   sha256sum -c casper-flash.iso.xz.sha256
+   cat casper-flash.iso.xz.00 | xz -dc > casper-flash.iso
    ```
-3. Copy **both** `casper-flash.iso` and `casper-n220.img` onto the stick's
-   main partition.
+3. Copy **just `casper-flash.iso`** onto the stick's main partition.
 4. Plug into the tablet, boot, and in the Ventoy menu select
    **casper-flash.iso**. (Ventoy supports 32-bit UEFI since v1.0.30 — if
    your Ventoy is older, update it first.)
-5. Watch the screen: it finds the image on the stick, shows a 10-second
-   countdown, flashes the internal eMMC, prints **"flash complete"**,
-   then reboots. Pull the stick during the countdown after that.
+5. Watch the screen: it finds the image **inside the ISO**, shows a
+   10-second countdown, flashes the internal eMMC, prints
+   **"flash complete"**, then reboots. Pull the stick after that.
 
-The flasher only touches the **one internal disk** (anything that is not
-the USB stick / CD). If it sees more than one candidate (e.g. an SD card
-is inserted), it aborts to a shell instead of guessing — remove the SD
-card and reboot.
+The flasher only ever touches the **internal eMMC** (anything that is not
+the USB stick / CD). If it sees more than one internal disk (e.g. an SD
+card is inserted), it aborts to a shell instead of guessing — remove the
+SD card and reboot.
+
+### Older two-file flow (still supported)
+
+If you have `casper-n220.img` (the raw image) on the stick's data
+partition instead, the flasher finds it there first — same result. The
+plain image is still published as `casper-n220.img.xz.00` for manual
+`dd` flashing and for the ESP kit.
 
 ### Fallback A: flash from within CasperOS booted from the stick
 

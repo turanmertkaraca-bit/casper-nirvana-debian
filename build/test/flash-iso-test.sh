@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# End-to-end test of the CasperOS auto-flash ISO under QEMU with 32-bit
-# OVMF firmware (exactly the tablet's boot path):
-#   -cdrom casper-flash.iso   +  payload disk (vfat, holds casper-n220.img)
-#                            +  blank target disk
-# Asserts the target disk ends up byte-identical to the payload.
+# End-to-end test of the CasperOS self-contained flash ISO under QEMU with
+# 32-bit OVMF firmware (the tablet's exact boot path):
+#   -cdrom test.iso  (flash env with a 200MB casper-n220.img embedded)
+#        + SD-card target (the internal eMMC stand-in)
+# The flasher must find the embedded image on the CD, flash /dev/mmcblk0,
+# and the SD card must end up byte-identical to the embedded image.
 #
-# Usage: sudo ./flash-iso-test.sh [flash.iso] [outdir]
+# Usage: sudo ./flash-iso-test.sh <flash-root> <outdir>
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-ISO="${1:-/tmp/casper-flash.iso}"
+ROOT="${1:?usage: flash-iso-test.sh <flash-root> <outdir>}"
 OUT="${2:-/tmp/flash-test}"
 
-[ -f "$ISO" ] || { echo "no ISO at $ISO" >&2; exit 1; }
 command -v qemu-system-x86_64 >/dev/null || { echo "qemu missing" >&2; exit 1; }
+command -v grub-mkrescue >/dev/null || { echo "grub-mkrescue missing" >&2; exit 1; }
 
 rm -rf "$OUT" && mkdir -p "$OUT"
 
@@ -36,39 +37,41 @@ fi
 cp -f "$FVARS" "$OUT/vars.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars.fd"
 echo "firmware: $FCODE"
 
-# ── payload disk: 300MB, msdos partition table + exfat partition ───────────
-# (exFAT = the real Ventoy stick format; vfat is quirky in this minimal env)
-truncate -s 300M "$OUT/payload.disk"
-LOOP=$(losetup -f)
-losetup "$LOOP" "$OUT/payload.disk"
-parted -s "$LOOP" mklabel msdos mkpart primary fat32 1MiB 100%
-partprobe "$LOOP" 2>/dev/null || true
-sleep 1
-P1="${LOOP}p1"
-[ -e "$P1" ] || P1="${LOOP}1"
-mkfs.vfat -F 32 -n PAYLOAD "$P1" >/dev/null
-# write into the FAT without mounting (mtools)
-dd if=/dev/urandom of="$OUT/casper-n220.img" bs=1M count=200 status=none
-mcopy -i "$P1" "$OUT/casper-n220.img" ::casper-n220.img
-echo "payload partition contents (host, via mdir):"
-mdir -i "$P1" | tail -5
-losetup -d "$LOOP"
-echo "payload disk size: $(stat -c %s "$OUT/payload.disk")"
+# ── build the self-contained test ISO (env + embedded 200MB image) ─────────
+VMLINUZ=$(ls "$ROOT"/boot/vmlinuz-* | head -1)
+INITRD=$(ls "$ROOT"/boot/initrd.img-* | head -1)
+[ -n "$VMLINUZ" ] && [ -n "$INITRD" ] || { echo "no kernel/initrd in $ROOT" >&2; exit 1; }
+ISOTREE="$OUT/isotree"
+mkdir -p "$ISOTREE/boot/grub"
+cp "$VMLINUZ" "$ISOTREE/boot/vmlinuz"
+cp "$INITRD" "$ISOTREE/boot/initrd.img"
+cat > "$ISOTREE/boot/grub/grub.cfg" <<'GRUB'
+set timeout=3
+set default=0
+menuentry "CasperOS Auto-Flash" {
+    linux /boot/vmlinuz root=/dev/ram0 rw quiet console=tty0 console=ttyS0,115200
+    initrd /boot/initrd.img
+}
+GRUB
+dd if=/dev/urandom of="$OUT/dummy.img" bs=1M count=200 status=none
+ln "$OUT/dummy.img" "$ISOTREE/casper-n220.img"
+grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on >/dev/null 2>&1
+echo "test ISO: $OUT/test.iso ($(stat -c %s "$OUT/test.iso") bytes)"
 
-# ── blank target disk ──────────────────────────────────────────────────────
+# ── blank SD-card target (stands in for the internal eMMC) ─────────────────
 truncate -s 2G "$OUT/target.disk"
 
-# ── boot the ISO with both disks attached ──────────────────────────────────
+# ── boot: the ISO as CD + SD-card target ───────────────────────────────────
 qemu-system-x86_64 \
     -enable-kvm -machine q35 -m 1024 -cpu qemu64 \
-    -cdrom "$ISO" \
-    -drive file="$OUT/payload.disk",format=raw,if=ide \
-    -drive file="$OUT/target.disk",format=raw,if=ide \
+    -cdrom "$OUT/test.iso" \
+    -device sdhci-pci \
+    -drive if=none,id=sd,file="$OUT/target.disk",format=raw \
+    -device sd-card,drive=sd \
     -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
     -drive if=pflash,format=raw,file="$OUT/vars.fd" \
     -chardev socket,id=ser,path="$OUT/ser.sock",server=on,wait=off \
     -serial chardev:ser \
-    -monitor tcp:127.0.0.1:45456,server=on,wait=off \
     -display none -vga std -no-reboot \
     > "$OUT/qemu.log" 2>&1 &
 QPID=$!
@@ -76,32 +79,28 @@ QPID=$!
 python3 "$SRC/test/qemu-wait.py" "$OUT/ser.sock" "CASPER_FLASH_DONE" 600 \
     > "$OUT/serial.log" 2>&1 || true
 
-# capture what the display shows (init messages land on tty0)
-exec 3<>/dev/tcp/127.0.0.1/45456 2>/dev/null || true
-echo "screendump $OUT/screen.ppm" >&3 2>/dev/null || true
-sleep 1
-exec 3>&- 2>/dev/null || true
-
 sleep 2
 kill "$QPID" 2>/dev/null || true
 wait "$QPID" 2>/dev/null || true
 
 echo "--- serial log:"
 cat "$OUT/serial.log"
-echo "--- screen capture: $(ppm_visible "$OUT/screen.ppm" 2>/dev/null || echo none)"
 
 # ── verdicts ───────────────────────────────────────────────────────────────
 pass=0; fail=0
 chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
-chk "$(grep -q 'casper-flash: payload found' "$OUT/serial.log" && echo 1 || echo 0)" "payload located on source disk"
-chk "$(grep -q 'flashing /dev/sdb' "$OUT/serial.log" && echo 1 || echo 0)" "target selected (the other disk)"
-chk "$(grep -q 'CASPER_FLASH_DONE' "$OUT/serial.log" && echo 1 || echo 0)" "flash completed"
-chk "$(grep -q 'FATAL' "$OUT/serial.log" && echo 0 || echo 1)" "no fatal errors"
+S="$OUT/serial.log"
+chk "$(grep -q 'payload found on /dev/sr0' "$S" && echo 1 || echo 0)" "payload located INSIDE the ISO (sr0)"
+chk "$(grep -q 'flashing /dev/mmcblk0' "$S" && echo 1 || echo 0)" "target = internal SD/eMMC (mmcblk0)"
+chk "$(grep -q 'CASPER_FLASH_DONE' "$S" && echo 1 || echo 0)" "flash completed"
+chk "$(grep -q 'FATAL' "$S" && echo 0 || echo 1)" "no fatal errors"
 
-# target first 200MB must be byte-identical to the payload
+# byte-identical check: expected sha from the ISO's embedded image
+mount -o loop,ro "$OUT/test.iso" "$OUT/iso-mnt" 2>/dev/null || mkdir -p "$OUT/iso-mnt"
+sha256sum "$OUT/iso-mnt/casper-n220.img" 2>/dev/null | cut -d' ' -f1 > "$OUT/expected.sha" || true
+umount "$OUT/iso-mnt" 2>/dev/null || true
 dd if="$OUT/target.disk" bs=1M count=200 status=none 2>/dev/null | sha256sum | cut -d' ' -f1 > "$OUT/target.sha"
-sha256sum "$OUT/casper-n220.img" | cut -d' ' -f1 > "$OUT/expected.sha"
-chk "$(cmp -s "$OUT/target.sha" "$OUT/expected.sha" && echo 1 || echo 0)" "target disk matches payload image"
+chk "$(cmp -s "$OUT/expected.sha" "$OUT/target.sha" && echo 1 || echo 0)" "SD card matches the embedded image"
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"

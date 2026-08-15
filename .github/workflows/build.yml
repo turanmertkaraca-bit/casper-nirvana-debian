@@ -96,7 +96,8 @@ jobs:
 
   flash-iso:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    needs: build
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,20 +108,68 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             mmdebstrap debootstrap debian-archive-keyring \
             grub-common grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin \
-            xorriso mtools zip qemu-system-x86 qemu-utils ovmf exfatprogs
+            xorriso mtools zip xz-utils qemu-system-x86 qemu-utils ovmf
           sudo ln -sf sid /usr/share/debootstrap/scripts/trixie 2>/dev/null || true
 
-      - name: Build the auto-flash ISO
-        run: |
-          sudo bash build/flash-iso/build-flash-iso.sh \
-            /tmp/flash-root /tmp/casper-flash.iso /tmp/casper-flash-esp.zip
-        timeout-minutes: 30
+      - name: Fetch the image from the build job
+        uses: actions/download-artifact@v4
+        with:
+          name: casper-n220-img
+          path: /tmp/img-artifact
 
-      - name: Test the flash ISO (QEMU, 32-bit OVMF)
+      - name: Decompress the raw image
+        run: |
+          cat /tmp/img-artifact/casper-n220.img.xz.?? | xz -dc > /tmp/casper-n220.img
+          rm -rf /tmp/img-artifact
+          sha256sum /tmp/casper-n220.img > /tmp/casper-n220.img.sha
+          echo "raw image: $(stat -c %s /tmp/casper-n220.img) bytes"
+
+      - name: Build the flash environment
+        run: |
+          sudo bash build/flash-iso/build-flash-iso.sh env /tmp/flash-root
+        timeout-minutes: 25
+
+      - name: Assemble the self-contained flash ISO (image embedded)
+        run: |
+          sudo bash build/flash-iso/build-flash-iso.sh iso \
+            /tmp/flash-root /tmp/casper-flash.iso /tmp/casper-n220.img
+        timeout-minutes: 20
+
+      - name: Verify the ISO contains the exact image
+        run: |
+          mkdir -p /tmp/iso-mnt
+          sudo mount -o loop,ro /tmp/casper-flash.iso /tmp/iso-mnt
+          EMBEDDED_SIZE=$(stat -c %s /tmp/iso-mnt/casper-n220.img)
+          RAW_SIZE=$(stat -c %s /tmp/casper-n220.img)
+          echo "embedded: $EMBEDDED_SIZE  raw: $RAW_SIZE"
+          [ "$EMBEDDED_SIZE" = "$RAW_SIZE" ] || exit 1
+          sha256sum /tmp/iso-mnt/casper-n220.img | cut -d' ' -f1 > /tmp/embedded.sha
+          sudo umount /tmp/iso-mnt
+          cmp /tmp/embedded.sha <(cut -d' ' -f1 /tmp/casper-n220.img.sha) \
+            && echo "ISO embeds the exact image" || exit 1
+          # free the standalone image now (it lives inside the ISO)
+          rm -f /tmp/casper-n220.img
+
+      - name: Test the flash ISO (QEMU, 32-bit OVMF, SD-card target)
         run: |
           sudo bash build/test/flash-iso-test.sh \
-            /tmp/casper-flash.iso /tmp/flash-test
+            /tmp/flash-root /tmp/flash-test
         timeout-minutes: 20
+
+      - name: Build the ESP kit
+        run: |
+          sudo bash build/flash-iso/build-flash-iso.sh kit \
+            /tmp/flash-root /tmp/casper-flash-esp.zip
+
+      - name: Compress and split the self-contained ISO
+        run: |
+          cd /tmp
+          rm -rf /tmp/flash-root /tmp/flash-test/isotree /tmp/flash-test/test.iso
+          xz -6eT0 -c casper-flash.iso > casper-flash.iso.xz
+          split -b 1900M -d -a 2 casper-flash.iso.xz casper-flash.iso.xz.
+          ls -la casper-flash.iso.xz.*
+          sha256sum casper-flash.iso.xz.* > casper-flash.iso.xz.sha256
+          cat casper-flash.iso.xz.sha256
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -128,7 +177,8 @@ jobs:
         with:
           name: casper-flash
           path: |
-            /tmp/casper-flash.iso
+            /tmp/casper-flash.iso.xz.*
+            /tmp/casper-flash.iso.xz.sha256
             /tmp/casper-flash-esp.zip
             /tmp/flash-test/serial.log
           retention-days: 30
@@ -146,5 +196,6 @@ jobs:
             sleep 20
           done
           gh release upload "${{ github.ref_name }}" \
-            /tmp/casper-flash.iso /tmp/casper-flash-esp.zip \
+            /tmp/casper-flash.iso.xz.* /tmp/casper-flash.iso.xz.sha256 \
+            /tmp/casper-flash-esp.zip \
             --repo "${{ github.repository }}" --clobber
