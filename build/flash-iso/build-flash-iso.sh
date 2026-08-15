@@ -108,8 +108,8 @@ GRUB
     fi
 
     info "building hybrid ISO (BIOS + UEFI x64 + UEFI IA32)"
-    # -iso-level 3: allows multi-extent files > 4GB (the embedded image)
-    grub-mkrescue -o "$OUT" "$ISODIR" -- -volid CASPER_FLASH -joliet on -iso-level 3
+    # -iso_level 3: allows multi-extent files > 4GB (the embedded image)
+    grub-mkrescue -o "$OUT" "$ISODIR" -- -volid CASPER_FLASH -joliet on -iso_level 3
     rm -rf "$ISODIR"
     ok "ISO: $OUT ($(stat -c %s "$OUT") bytes)"
 }

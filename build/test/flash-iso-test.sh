@@ -55,7 +55,7 @@ menuentry "CasperOS Auto-Flash" {
 GRUB
 dd if=/dev/urandom of="$OUT/dummy.img" bs=1M count=200 status=none
 ln "$OUT/dummy.img" "$ISOTREE/casper-n220.img"
-grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on -iso-level 3 >/dev/null 2>&1
+grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on -iso_level 3 >/dev/null 2>&1
 echo "test ISO: $OUT/test.iso ($(stat -c %s "$OUT/test.iso") bytes)"
 
 # ── blank SD-card target (stands in for the internal eMMC) ─────────────────
