@@ -176,15 +176,15 @@ $BB sleep 10
 msg "flashing $TARGET ..."
 case "$PAYLOAD" in
     *.xz)
-        # stream-decompress straight onto the target (no intermediate file)
+        # stream-decompress straight onto the target (no intermediate file);
+        # dd's exit status covers xz failures too (read error -> exit 1)
         xz -dc "$PAYLOAD" 2>/dev/null | $BB dd of="$TARGET" bs=4M conv=fsync 2>/dev/null
-        [ "${PIPESTATUS[0]}" = "0" ] && [ "${PIPESTATUS[1]}" = "0" ]
         ;;
     *)
         $BB dd if="$PAYLOAD" of="$TARGET" bs=4M conv=fsync 2>/dev/null
         ;;
 esac
-if [ $? = 0 ]; then
+if [ $? -eq 0 ]; then
     $BB sync
     msg "flash complete — CASPER_FLASH_DONE"
     msg "CasperOS installed. Remove the USB stick; rebooting in 5 seconds..."
