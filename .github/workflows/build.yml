@@ -174,7 +174,7 @@ jobs:
           rm -rf /tmp/flash-root 2>/dev/null || true
           rm -rf /tmp/flash-test/isotree /tmp/flash-test/test.iso 2>/dev/null || true
           xz -6eT0 -c casper-flash.iso > casper-flash.iso.xz
-          split -b 1900M -d -a 2 casper-flash.iso.xz casper-flash.iso.xz.
+          split -b 900M -d -a 2 casper-flash.iso.xz casper-flash.iso.xz.
           ls -la casper-flash.iso.xz.*
           sha256sum casper-flash.iso.xz.* > casper-flash.iso.xz.sha256
           cat casper-flash.iso.xz.sha256
@@ -203,7 +203,12 @@ jobs:
             fi
             sleep 20
           done
-          gh release upload "${{ github.ref_name }}" \
-            /tmp/casper-flash.iso.xz.* /tmp/casper-flash.iso.xz.sha256 \
-            /tmp/casper-flash-esp.zip \
-            --repo "${{ github.repository }}" --clobber
+          # upload each file with retries (the big ones can be flaky)
+          for f in /tmp/casper-flash.iso.xz.* /tmp/casper-flash-esp.zip; do
+            for i in $(seq 1 5); do
+              echo "uploading $f (attempt $i)"
+              gh release upload "${{ github.ref_name }}" "$f" \
+                --repo "${{ github.repository }}" --clobber && break
+              sleep 30
+            done
+          done
