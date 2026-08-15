@@ -37,7 +37,7 @@ fi
 cp -f "$FVARS" "$OUT/vars.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars.fd"
 echo "firmware: $FCODE"
 
-# ── build the self-contained test ISO (env + embedded 200MB image) ─────────
+# ── build the self-contained test ISO (env + embedded compressed image) ─────
 VMLINUZ=$(ls "$ROOT"/boot/vmlinuz-* | head -1)
 INITRD=$(ls "$ROOT"/boot/initrd.img-* | head -1)
 [ -n "$VMLINUZ" ] && [ -n "$INITRD" ] || { echo "no kernel/initrd in $ROOT" >&2; exit 1; }
@@ -53,9 +53,11 @@ menuentry "CasperOS Auto-Flash" {
     initrd /boot/initrd.img
 }
 GRUB
+# a 200MB random image, compressed (as the real release embeds the .xz)
 dd if=/dev/urandom of="$OUT/dummy.img" bs=1M count=200 status=none
-ln "$OUT/dummy.img" "$ISOTREE/casper-n220.img"
-grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on -iso_level 3 >/dev/null 2>&1
+xz -1 -c "$OUT/dummy.img" > "$OUT/dummy.img.xz"
+ln "$OUT/dummy.img.xz" "$ISOTREE/casper-n220.img.xz"
+grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on >/dev/null 2>&1
 echo "test ISO: $OUT/test.iso ($(stat -c %s "$OUT/test.iso") bytes)"
 
 # ── blank SD-card target (stands in for the internal eMMC) ─────────────────
@@ -95,12 +97,10 @@ chk "$(grep -q 'flashing /dev/mmcblk0' "$S" && echo 1 || echo 0)" "target = inte
 chk "$(grep -q 'CASPER_FLASH_DONE' "$S" && echo 1 || echo 0)" "flash completed"
 chk "$(grep -q 'FATAL' "$S" && echo 0 || echo 1)" "no fatal errors"
 
-# byte-identical check: expected sha from the ISO's embedded image
-mount -o loop,ro "$OUT/test.iso" "$OUT/iso-mnt" 2>/dev/null || mkdir -p "$OUT/iso-mnt"
-sha256sum "$OUT/iso-mnt/casper-n220.img" 2>/dev/null | cut -d' ' -f1 > "$OUT/expected.sha" || true
-umount "$OUT/iso-mnt" 2>/dev/null || true
+# byte-identical check: expected sha = the ORIGINAL dummy (before compression)
+sha256sum "$OUT/dummy.img" | cut -d' ' -f1 > "$OUT/expected.sha"
 dd if="$OUT/target.disk" bs=1M count=200 status=none 2>/dev/null | sha256sum | cut -d' ' -f1 > "$OUT/target.sha"
-chk "$(cmp -s "$OUT/expected.sha" "$OUT/target.sha" && echo 1 || echo 0)" "SD card matches the embedded image"
+chk "$(cmp -s "$OUT/expected.sha" "$OUT/target.sha" && echo 1 || echo 0)" "SD card matches the decompressed embedded image"
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"

@@ -13,6 +13,7 @@ esac
 
 copy_exec /bin/busybox /bin
 copy_exec /bin/busybox /sbin/modprobe 2>/dev/null || true
+copy_exec /usr/bin/xz /usr/bin/xz 2>/dev/null || true
 
 cat > "${DESTDIR}/init" <<'INITEOF'
 #!/bin/sh
@@ -82,8 +83,26 @@ $BB sleep 1
 PAYLOAD=""
 SRCDISK=""
 
+# find casper-n220.img (raw) or casper-n220.img.xz (compressed) on a
+# mounted filesystem; returns 0 and sets PAYLOAD/SRCDISK on success
+find_payload() { # $1 = mount dir, $2 = source device, $3 = source disk
+    if [ -f "$1/casper-n220.img" ]; then
+        PAYLOAD="$1/casper-n220.img"
+        SRCDISK="$3"
+        msg "payload found on $2 ($($BB stat -c %s "$PAYLOAD") bytes)"
+        return 0
+    fi
+    if [ -f "$1/casper-n220.img.xz" ]; then
+        PAYLOAD="$1/casper-n220.img.xz"
+        SRCDISK="$3"
+        msg "compressed payload found on $2 ($($BB stat -c %s "$PAYLOAD") bytes)"
+        return 0
+    fi
+    return 1
+}
+
 # ── 1. search disk partitions (e.g. the USB stick's exFAT) ─────────────────
-msg "scanning disk partitions for casper-n220.img..."
+msg "scanning disk partitions for casper-n220.img[.xz]..."
 for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
     [ -d "$d" ] || continue
     disk="/dev/$(basename "$d")"
@@ -94,10 +113,7 @@ for d in /sys/block/sd[a-z] /sys/block/mmcblk[0-9]; do
            $BB mount -t vfat  -o ro "$part" /mnt 2>/dev/null || \
            $MOUNT -t vfat  -o ro "$part" /mnt 2>/dev/null; then
             msg "mounted $part"
-            if [ -f /mnt/casper-n220.img ]; then
-                PAYLOAD="/mnt/casper-n220.img"
-                SRCDISK="$disk"
-                msg "payload found on $part ($($BB stat -c %s "$PAYLOAD") bytes)"
+            if find_payload /mnt "$part" "$disk"; then
                 break 2
             fi
             $BB umount /mnt 2>/dev/null
@@ -107,25 +123,22 @@ done
 
 # ── 2. search the flash ISO itself (self-contained flow) ───────────────────
 if [ -z "$PAYLOAD" ]; then
-    msg "scanning optical drives for casper-n220.img..."
+    msg "scanning optical drives for casper-n220.img[.xz]..."
     for cd in /dev/sr?; do
         [ -b "$cd" ] || continue
         $BB mkdir -p /mnt
         if $MOUNT -t iso9660 -o ro "$cd" /mnt 2>/dev/null || \
            $BB mount -t iso9660 -o ro "$cd" /mnt 2>/dev/null; then
             msg "mounted $cd"
-            if [ -f /mnt/casper-n220.img ]; then
-                PAYLOAD="/mnt/casper-n220.img"
-                SRCDISK="$cd"
-                msg "payload found on $cd ($($BB stat -c %s "$PAYLOAD") bytes)"
+            if find_payload /mnt "$cd" "$cd"; then
                 break
             fi
-            msg "  (no casper-n220.img on $cd)"
+            msg "  (no casper-n220.img[.xz] on $cd)"
         fi
     done
 fi
 
-[ -n "$PAYLOAD" ] || die "casper-n220.img not found (not on the stick, not in the ISO)"
+[ -n "$PAYLOAD" ] || die "casper-n220.img[.xz] not found (not on the stick, not in the ISO)"
 
 # ── 3. target: exactly ONE internal eMMC/SD disk (the stick is USB/CD) ─────
 TARGET=""
@@ -141,20 +154,37 @@ done
 [ -n "$TARGET" ] || die "no internal (eMMC) target disk found"
 
 PAYLOADSIZE=$($BB stat -c %s "$PAYLOAD")
+case "$PAYLOAD" in
+    *.xz)
+        # decompressed size from the xz stream header (fast, no I/O)
+        XZSIZE=$(xz --robot -l "$PAYLOAD" 2>/dev/null | head -1 | awk '{print $5}')
+        [ -n "$XZSIZE" ] && [ "$XZSIZE" -gt 0 ] 2>/dev/null && PAYLOADSIZE="$XZSIZE"
+        ;;
+esac
 TARGETSIZE=$(( $(cat "/sys/block/$(basename "$TARGET")/size") * 512 ))
 [ "$TARGETSIZE" -ge "$PAYLOADSIZE" ] || die "target disk ($TARGET) is smaller than the image"
 
 msg "==================================================="
 msg "  INSTALLING CasperOS"
 msg "  source: $SRCDISK : $PAYLOAD"
-msg "  target: $TARGET ($TARGETSIZE bytes)"
+msg "  target: $TARGET ($TARGETSIZE bytes, image $PAYLOADSIZE bytes)"
 msg "  The target disk will be OVERWRITTEN."
 msg "  Remove the USB stick only after 'flash complete'."
 msg "==================================================="
 msg "flashing in 10 seconds..."
 $BB sleep 10
 msg "flashing $TARGET ..."
-if $BB dd if="$PAYLOAD" of="$TARGET" bs=4M conv=fsync 2>/dev/null; then
+case "$PAYLOAD" in
+    *.xz)
+        # stream-decompress straight onto the target (no intermediate file)
+        xz -dc "$PAYLOAD" 2>/dev/null | $BB dd of="$TARGET" bs=4M conv=fsync 2>/dev/null
+        [ "${PIPESTATUS[0]}" = "0" ] && [ "${PIPESTATUS[1]}" = "0" ]
+        ;;
+    *)
+        $BB dd if="$PAYLOAD" of="$TARGET" bs=4M conv=fsync 2>/dev/null
+        ;;
+esac
+if [ $? = 0 ]; then
     $BB sync
     msg "flash complete — CASPER_FLASH_DONE"
     msg "CasperOS installed. Remove the USB stick; rebooting in 5 seconds..."

@@ -117,12 +117,13 @@ jobs:
           name: casper-n220-img
           path: /tmp/img-artifact
 
-      - name: Decompress the raw image
+      - name: Prepare the embedded payload (compressed image)
         run: |
-          cat /tmp/img-artifact/casper-n220.img.xz.?? | xz -dc > /tmp/casper-n220.img
+          mkdir -p /tmp/payload
+          cat /tmp/img-artifact/casper-n220.img.xz.?? > /tmp/payload/casper-n220.img.xz
+          sha256sum /tmp/payload/casper-n220.img.xz | cut -d' ' -f1 > /tmp/payload.sha
           rm -rf /tmp/img-artifact
-          sha256sum /tmp/casper-n220.img > /tmp/casper-n220.img.sha
-          echo "raw image: $(stat -c %s /tmp/casper-n220.img) bytes"
+          echo "embedded payload: $(stat -c %s /tmp/payload/casper-n220.img.xz) bytes"
 
       - name: Build the flash environment
         run: |
@@ -132,23 +133,18 @@ jobs:
       - name: Assemble the self-contained flash ISO (image embedded)
         run: |
           sudo bash build/flash-iso/build-flash-iso.sh iso \
-            /tmp/flash-root /tmp/casper-flash.iso /tmp/casper-n220.img
+            /tmp/flash-root /tmp/casper-flash.iso /tmp/payload/casper-n220.img.xz
         timeout-minutes: 20
 
       - name: Verify the ISO contains the exact image
         run: |
           mkdir -p /tmp/iso-mnt
           sudo mount -o loop,ro /tmp/casper-flash.iso /tmp/iso-mnt
-          EMBEDDED_SIZE=$(stat -c %s /tmp/iso-mnt/casper-n220.img)
-          RAW_SIZE=$(stat -c %s /tmp/casper-n220.img)
-          echo "embedded: $EMBEDDED_SIZE  raw: $RAW_SIZE"
-          [ "$EMBEDDED_SIZE" = "$RAW_SIZE" ] || exit 1
-          sha256sum /tmp/iso-mnt/casper-n220.img | cut -d' ' -f1 > /tmp/embedded.sha
+          echo "embedded: $(stat -c %s /tmp/iso-mnt/casper-n220.img.xz) bytes"
+          sha256sum /tmp/iso-mnt/casper-n220.img.xz | cut -d' ' -f1 > /tmp/embedded.sha
           sudo umount /tmp/iso-mnt
-          cmp /tmp/embedded.sha <(cut -d' ' -f1 /tmp/casper-n220.img.sha) \
+          cmp /tmp/embedded.sha /tmp/payload.sha \
             && echo "ISO embeds the exact image" || exit 1
-          # free the standalone image now (it lives inside the ISO)
-          rm -f /tmp/casper-n220.img
 
       - name: Test the flash ISO (QEMU, 32-bit OVMF, SD-card target)
         run: |

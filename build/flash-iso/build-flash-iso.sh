@@ -33,7 +33,7 @@ do_env() {
     info "bootstrapping minimal trixie root"
     mmdebstrap --variant=minbase --arch=amd64 \
         --components="main,contrib,non-free,non-free-firmware" \
-        --include="ca-certificates,debian-archive-keyring,locales,linux-image-amd64,initramfs-tools,busybox,kmod" \
+        --include="ca-certificates,debian-archive-keyring,locales,linux-image-amd64,initramfs-tools,busybox,kmod,xz-utils" \
         --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
         --aptopt='APT::Install-Recommends "false";' \
         --aptopt='APT::Install-Suggests "false";' \
@@ -103,8 +103,14 @@ menuentry "CasperOS Auto-Flash" {
 GRUB
     if [ -n "$PAYLOAD" ]; then
         info "embedding payload: $PAYLOAD"
-        ln -f "$PAYLOAD" "$ISODIR/casper-n220.img"
-        ok "embedded casper-n220.img ($(stat -c %s "$ISODIR/casper-n220.img") bytes)"
+        # name it by type: the flasher accepts casper-n220.img (raw) or .xz
+        local PNAME
+        case "$PAYLOAD" in
+            *.xz) PNAME="casper-n220.img.xz" ;;
+            *)    PNAME="casper-n220.img" ;;
+        esac
+        ln -f "$PAYLOAD" "$ISODIR/$PNAME"
+        ok "embedded $PNAME ($(stat -c %s "$ISODIR/$PNAME") bytes)"
     fi
 
     info "building hybrid ISO (BIOS + UEFI x64 + UEFI IA32)"
