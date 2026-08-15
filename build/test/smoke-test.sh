@@ -222,7 +222,7 @@ dump_journal() { # name
 # ── boot one configuration ─────────────────────────────────────────────────
 run_boot() {
     local name="$1" monport="$2" attempt
-    for attempt in 1 2; do
+    for attempt in 1 2 3; do
         echo "=== boot: $name (attempt $attempt) ==="
         "prep_$name"
         cp -f "$FVARS" "$OUT/vars-$name.fd" 2>/dev/null || cp -f "$FCODE" "$OUT/vars-$name.fd"
@@ -243,7 +243,11 @@ run_boot() {
         sleep 15
         screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
-        python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" 600 \
+        # first attempt gets a generous timeout; retries assume the
+        # boot-to-login normally takes ~90s (the flake hangs forever)
+        local lt=600
+        [ "$attempt" -gt 1 ] && lt=240
+        python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$lt" \
             > "$OUT/serial-$name.log" 2>&1 || true
 
         screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
