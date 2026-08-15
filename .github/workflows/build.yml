@@ -160,7 +160,9 @@ jobs:
       - name: Compress and split the self-contained ISO
         run: |
           cd /tmp
-          rm -rf /tmp/flash-root /tmp/flash-test/isotree /tmp/flash-test/test.iso
+          # the chroot's proc/sys mounts can't be removed — ignore failures
+          rm -rf /tmp/flash-root 2>/dev/null || true
+          rm -rf /tmp/flash-test/isotree /tmp/flash-test/test.iso 2>/dev/null || true
           xz -6eT0 -c casper-flash.iso > casper-flash.iso.xz
           split -b 1900M -d -a 2 casper-flash.iso.xz casper-flash.iso.xz.
           ls -la casper-flash.iso.xz.*
