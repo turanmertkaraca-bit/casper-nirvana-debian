@@ -43,13 +43,30 @@ echo "(preseed.cfg present in the booted initrd: $?)"
 
 # ── phase 1: run the installer (preseeded, automatic; BIOS machine) ─────────
 echo "=== phase 1: installing (this takes a while) ==="
+# the installer ships its syslog to the qemu host (10.0.2.2) via UDP 514 —
+# this is how we see the preseed/installer internals (they don't hit the
+# serial). The syslog's md5 also gives us a reliable progress signal.
+(nc -u -l -p 514 > "$OUT/installer-syslog.log" 2>/dev/null || \
+ python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('10.0.2.2', 514))
+with open('$OUT/installer-syslog.log','ab') as f:
+    while True:
+        d, _ = s.recvfrom(65535)
+        if not d: break
+        f.write(d + b'\n')
+        f.flush()
+") &
+SYSLOG_PID=$!
+
 qemu-system-x86_64 \
     -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
     -cdrom "$ISO" \
     -drive file="$OUT/target.disk",format=raw,if=ide \
     -netdev user,id=n1 -device e1000,netdev=n1 \
     -kernel "$OUT/vmlinuz" -initrd "$OUT/initrd.gz" \
-    -append "auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200" \
+    -append "auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 loghost=10.0.2.2" \
     -serial file:"$OUT/serial-install.log" \
     -display none -vga std -no-reboot \
     > "$OUT/qemu-install.log" 2>&1 &
@@ -58,44 +75,50 @@ QPID=$!
 WAITED=0
 IDLE=0
 TIMEOUT=5400
-LAST_MD5=""
+LAST_SYSMD5=""
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
     WAITED=$((WAITED+30))
     if [ $((WAITED % 600)) = 0 ]; then
-        echo "  ... install still running (${WAITED}s); last serial:"
-        tail -2 "$OUT/serial-install.log" 2>/dev/null || true
+        echo "  ... install still running (${WAITED}s); last syslog:"
+        tail -2 "$OUT/installer-syslog.log" 2>/dev/null || true
     fi
-    # fail fast if the installer is stuck at a static screen (no serial
-    # change for 10 minutes = the preseed didn't drive it forward)
-    CUR_MD5=$(md5sum "$OUT/serial-install.log" 2>/dev/null | awk '{print $1}')
-    if [ -n "$CUR_MD5" ] && [ "$CUR_MD5" = "$LAST_MD5" ]; then
+    # fail fast if the installer is stuck (no syslog growth for 10 minutes)
+    CUR_SYSMD5=$(md5sum "$OUT/installer-syslog.log" 2>/dev/null | awk '{print $1}')
+    if [ -n "$CUR_SYSMD5" ] && [ "$CUR_SYSMD5" = "$LAST_SYSMD5" ]; then
         IDLE=$((IDLE+30))
     else
         IDLE=0
     fi
-    LAST_MD5="$CUR_MD5"
+    LAST_SYSMD5="$CUR_SYSMD5"
     if [ "$IDLE" -ge 600 ] && [ "$WAITED" -ge 300 ]; then
-        echo "ERROR: installer screen unchanged for ${IDLE}s (preseed not driving it)"
+        echo "ERROR: installer stuck (no syslog growth for ${IDLE}s)"
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
-        echo "--- installer serial (FULL):"
-        cat "$OUT/serial-install.log" 2>/dev/null || true
+        kill "$SYSLOG_PID" 2>/dev/null || true
+        echo "=== installer syslog (tail 120):"
+        tail -120 "$OUT/installer-syslog.log" 2>/dev/null || echo "(no syslog received)"
+        echo "=== installer serial tail:"
+        tail -40 "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
     if [ "$WAITED" -ge "$TIMEOUT" ]; then
         echo "ERROR: installer did not finish in ${TIMEOUT}s"
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
-        echo "--- installer serial (full, first 300 lines):"
-        head -300 "$OUT/serial-install.log" 2>/dev/null || true
-        echo "--- installer serial tail (last 40 lines):"
+        kill "$SYSLOG_PID" 2>/dev/null || true
+        echo "=== installer syslog (tail 120):"
+        tail -120 "$OUT/installer-syslog.log" 2>/dev/null || echo "(no syslog received)"
+        echo "=== installer serial tail:"
         tail -40 "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
 done
+kill "$SYSLOG_PID" 2>/dev/null || true
 wait "$QPID" 2>/dev/null || true
 echo "installer exited"
+echo "--- installer syslog tail (last 15 lines):"
+tail -15 "$OUT/installer-syslog.log" 2>/dev/null || echo "(no syslog received)"
 echo "--- installer serial tail (last 15 lines):"
 tail -15 "$OUT/serial-install.log" 2>/dev/null || true
 lsblk -o NAME,SIZE,FSTYPE "$OUT/target.disk" 2>/dev/null || true
