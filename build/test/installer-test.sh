@@ -37,6 +37,9 @@ umount "$OUT/iso"
 losetup -d "$LOOP" 2>/dev/null || true
 rmdir "$OUT/iso" 2>/dev/null || true
 echo "kernel: $OUT/vmlinuz, initrd: $OUT/initrd.gz"
+echo "--- initrd contents check:"
+gzip -dc "$OUT/initrd.gz" 2>/dev/null | cpio -t 2>/dev/null | grep -E 'preseed\.cfg|^casperos$|lib/firmware/rtl8723bs' | head -8
+echo "(preseed.cfg present in the booted initrd: $?)"
 
 # ── phase 1: run the installer (preseeded, automatic; BIOS machine) ─────────
 echo "=== phase 1: installing (this takes a while) ==="
@@ -76,10 +79,8 @@ while kill -0 "$QPID" 2>/dev/null; do
         echo "ERROR: installer screen unchanged for ${IDLE}s (preseed not driving it)"
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
-        echo "--- installer serial (full, first 300 lines):"
-        head -300 "$OUT/serial-install.log" 2>/dev/null || true
-        echo "--- installer serial tail (last 40 lines):"
-        tail -40 "$OUT/serial-install.log" 2>/dev/null || true
+        echo "--- installer serial (FULL):"
+        cat "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
     if [ "$WAITED" -ge "$TIMEOUT" ]; then
