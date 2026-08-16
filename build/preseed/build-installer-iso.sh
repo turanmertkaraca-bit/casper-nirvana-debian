@@ -90,7 +90,7 @@ fi
 for f in "$WORK/iso/isolinux/txt.cfg" "$WORK/iso/isolinux/gtk.cfg"; do
     [ -f "$f" ] || continue
     awk '
-        { if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " preseed/file=/cdrom/preseed.cfg auto"; done=1; next } print }
+        { if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " preseed/file=/preseed.cfg auto"; done=1; next } print }
     ' "$f" > "$f.new" && mv "$f.new" "$f"
 done
 
