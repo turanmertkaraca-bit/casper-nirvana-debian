@@ -46,24 +46,36 @@ qemu-system-x86_64 \
     -netdev user,id=n1 -device e1000,netdev=n1 \
     -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
     -drive if=pflash,format=raw,file="$OUT/vars-install.fd" \
-    -chardev socket,id=ser,path="$OUT/ser-install.sock",server=on,wait=off \
-    -serial chardev:ser \
+    -serial file:"$OUT/serial-install.log" \
     -display none -vga std -no-reboot \
     > "$OUT/qemu-install.log" 2>&1 &
 QPID=$!
 
 # wait for the installer to finish (it reboots; -no-reboot makes qemu exit)
+# with a hard timeout and periodic progress prints
+WAITED=0
+TIMEOUT=2700
+while kill -0 "$QPID" 2>/dev/null; do
+    sleep 30
+    WAITED=$((WAITED+30))
+    if [ $((WAITED % 300)) = 0 ]; then
+        echo "  ... install still running (${WAITED}s); last serial:"
+        tail -2 "$OUT/serial-install.log" 2>/dev/null || true
+    fi
+    if [ "$WAITED" -ge "$TIMEOUT" ]; then
+        echo "ERROR: installer did not finish in ${TIMEOUT}s"
+        kill "$QPID" 2>/dev/null || true
+        wait "$QPID" 2>/dev/null || true
+        echo "--- installer serial tail (last 40 lines):"
+        tail -40 "$OUT/serial-install.log" 2>/dev/null || true
+        exit 1
+    fi
+done
 wait "$QPID" 2>/dev/null || true
-echo "installer exited (code $?)"
-echo "--- installer serial tail:"
-tail -c 4000 "$OUT/ser-install.sock" 2>/dev/null || true
-
-# capture the installer log for diagnostics (via a quick re-run trick is
-# not possible — instead the serial socket file is empty; use the log)
-grep -a -iE 'Finished|preseed|error|failed' "$OUT/qemu-install.log" | tail -5 || true
-
-# make sure the disk actually got partitioned + installed
-lsblk -o NAME,SIZE,FSTYPE "$OUT/target.disk" 2>/dev/null || true
+echo "installer exited"
+echo "--- installer serial tail (last 15 lines):"
+tail -15 "$OUT/serial-install.log" 2>/dev/null || true
+grep -a -m3 -E 'Finished installation|reboot|Rebooting' "$OUT/serial-install.log" 2>/dev/null || true
 
 # ── phase 2: boot the installed system and verify ──────────────────────────
 echo "=== phase 2: booting the installed system ==="
