@@ -65,9 +65,9 @@ mkdir -p "$WORK/ird"
 cd "$WORK/ird"
 gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null || true
 echo "initrd extracted: $(find . -maxdepth 2 -type d | head -5 | tr '\n' ' ')"
-# drop the overlay's firmware into place (force — the cpio may leave odd states)
-rm -rf "$WORK/ird/lib"
-cp -a "$WORK/initrd-overlay/lib" "$WORK/ird/"
+# merge the firmware INTO the existing lib — never replace it
+mkdir -p "$WORK/ird/lib/firmware"
+cp -a "$WORK/initrd-overlay/lib/firmware/." "$WORK/ird/lib/firmware/"
 find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
 echo "initrd rebuilt with firmware: $(ls "$WORK/ird/lib/firmware/rtl8723bs" 2>/dev/null | wc -l) rtl8723bs files"
 
