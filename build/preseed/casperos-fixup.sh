@@ -1,11 +1,23 @@
 #!/bin/bash
-# CasperOS fixup — runs inside the freshly installed Debian system
-# (via the installer's late_command, chrooted at /target, payload at
-# /tmp/casperos). Turns a stock Debian 13 install into CasperOS:
-# package set, all configs, 5.15 fallback kernel, GRUB tuning, services.
+# CasperOS fixup — turns a stock Debian 13 install into CasperOS.
+# Works in two ways:
+#   1. Automatically, via the installer's late_command (payload at /tmp/casperos)
+#   2. Manually, after any Debian install:
+#        git clone https://github.com/turanmertkaraca-bit/casper-nirvana-debian
+#        cd casper-nirvana-debian && sudo bash build/preseed/casperos-fixup.sh
+# Applies: package set, all configs, 5.15 fallback kernel, GRUB tuning,
+#          services, plymouth theme, and the lvy user setup.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-B=/tmp/casperos
+if [ -d /tmp/casperos ]; then
+    B=/tmp/casperos
+elif [ -f "$(dirname "$0")/../configs/etc/hostname" ]; then
+    B="$(cd "$(dirname "$0")/../.." && pwd)"
+    ln -sfn "$B/build/packages.list" "$B/packages.list" 2>/dev/null || true
+else
+    echo "ERROR: run from a repo checkout or with the /tmp/casperos payload" >&2
+    exit 1
+fi
 
 log() { echo "casperos-fixup: $*"; }
 

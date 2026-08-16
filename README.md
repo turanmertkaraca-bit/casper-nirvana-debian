@@ -42,69 +42,50 @@ Everything is baked in — nothing runs after first boot:
   Trail cannot hardware-decode; h264ify forces the H.264 stream the GPU
   actually decodes. Cap playback at ≤1080p/30fps.
 
-## Flashing (no OS required — Ventoy USB stick)
+## Flashing / installing (no OS required — Ventoy USB stick)
 
-CasperOS is a **raw disk image**, so it isn't booted like a distro installer.
-The recommended path needs no keyboard and no terminal — and only **one
-file** on the stick:
+Three ways, in order of preference:
 
-### Recommended: self-contained flash ISO on a Ventoy stick
+### 1. Debian-installer ISO (visible, keyboard-friendly)
 
-1. Download from the release:
-   - `casper-flash.iso.xz.00` + `casper-flash.iso.xz.01` + `casper-flash.iso.xz.sha256`
-     (the flash ISO **with the CasperOS image already inside**)
-   - `casper-flash-esp.zip` (only needed as a fallback, see below)
-2. Decompress to the raw ISO (needs ~7 GB free — phone or PC):
-   ```bash
-   sha256sum -c casper-flash.iso.xz.sha256
-   cat casper-flash.iso.xz.?? | xz -dc > casper-flash.iso
-   ```
-3. Copy **just `casper-flash.iso`** onto the stick's main partition.
-4. Plug into the tablet, boot, and in the Ventoy menu select
-   **casper-flash.iso**. (Ventoy supports 32-bit UEFI since v1.0.30 — if
-   your Ventoy is older, update it first.)
-5. Watch the screen: it finds the image **inside the ISO**, shows a
-   10-second countdown, flashes the internal eMMC, prints
-   **"flash complete"**, then reboots. Pull the stick after that.
+Download `casper-install.iso` + `casper-install.iso.sha256` from the
+release and put the ISO on the Ventoy stick. Boot → Ventoy menu →
+`casper-install.iso`. The installer is Debian's own (full on-screen
+progress, USB keyboard works). It **tries to auto-install** with a preseed
+(Turkish locale, user `lvy`, whole-disk install, all CasperOS fixes
+applied automatically) — if the preseed engages you just wait; if it
+falls back to the interactive menu, pick the defaults and continue (the
+installer still installs plain Debian, and you apply the fixes with one
+command afterwards, see below). The tablet's RTL8723BS Wi-Fi firmware is
+bundled into the installer, so Wi-Fi works during the install.
 
-The flasher only ever touches the **internal eMMC** (anything that is not
-the USB stick / CD). If it sees more than one internal disk (e.g. an SD
-card is inserted), it aborts to a shell instead of guessing — remove the
-SD card and reboot.
+### 2. Self-contained flash ISO (zero interaction)
 
-### Older two-file flow (still supported)
+`casper-flash.iso.xz.00` + `.01` (with the CasperOS image already inside;
+decompress with `cat casper-flash.iso.xz.?? | xz -dc > casper-flash.iso`)
+→ copy `casper-flash.iso` to the stick → boot → it flashes the internal
+eMMC automatically. Note: older builds of this ISO showed no on-screen
+progress; the current build shows every step.
 
-If you have `casper-n220.img` (the raw image) on the stick's data
-partition instead, the flasher finds it there first — same result. The
-plain image is still published as `casper-n220.img.xz.00` for manual
-`dd` flashing and for the ESP kit.
-
-### Fallback A: flash from within CasperOS booted from the stick
-
-If your Ventoy boots raw `.img` files directly (select `casper-n220.img`
-in the menu), CasperOS runs from the stick; then on the desktop:
-`sudo /usr/local/bin/casper-flash` — same result.
-
-### Fallback B: Debian netinst rescue shell
-
-Put `debian-13.x-amd64-netinst.iso` on the stick too (Debian's amd64
-ISOs include the 32-bit UEFI loader, so they boot on this tablet). Boot
-it → **Advanced options → Rescue mode** → shell, then:
+### 3. After any manual Debian 13 install — one command
 
 ```bash
-mkdir /mnt/s
-mount -t vfat /dev/sda1 /mnt/s   # find the stick partition with lsblk
-cat /mnt/s/casper-n220.img.xz.00 | xz -dc > /dev/mmcblk0
-sync; reboot
+sudo apt install -y git
+git clone https://github.com/turanmertkaraca-bit/casper-nirvana-debian
+cd casper-nirvana-debian
+sudo bash build/preseed/casperos-fixup.sh
+sudo reboot
 ```
 
-### Fallback C: ESP kit (firmware that won't boot Ventoy at all)
+This applies the complete CasperOS configuration (package set, touch/
+audio/performance fixes, 5.15 fallback kernel, GRUB tuning, plymouth
+theme, lvy user) to any stock Debian 13 system. It needs network on the
+tablet (Wi-Fi or USB-tethered phone).
 
-`casper-flash-esp.zip` contains a replacement `BOOTIA32.EFI` plus the
-kernel/initrd. Copy `BOOTIA32.EFI` over `/EFI/BOOT/BOOTIA32.EFI` on the
-stick's ESP partition (FAT32), put `vmlinuz`/`initrd.img` in a `flash/`
-folder on the data partition, and the tablet boots the flasher directly —
-no Ventoy menu involved.
+### Legacy paths (still supported)
+
+- The plain image `casper-n220.img.xz.00` for manual `dd`, and the ESP kit
+  `casper-flash-esp.zip` for firmware that won't boot Ventoy at all.
 
 ---
 
