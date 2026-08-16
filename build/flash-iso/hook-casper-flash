@@ -24,7 +24,14 @@ cat > "${DESTDIR}/init" <<'INITEOF'
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin
 BB=/bin/busybox
 
-msg() { echo "casper-flash: $*"; }
+msg() {
+    local line="casper-flash: $*"
+    # /dev/console follows the LAST console= (the serial in QEMU, where the
+    # test reads it). Real tablets have no serial — write to the screen too.
+    echo "$line" > /dev/tty0 2>/dev/null || true
+    echo "$line" > /dev/ttyS0 2>/dev/null || true
+    echo "$line"
+}
 die() {
     msg "FATAL: $*"
     msg "Dropping to a shell. The image must be named exactly"
