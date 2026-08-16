@@ -122,7 +122,7 @@ jobs:
           sudo bash build/preseed/build-installer-iso.sh /tmp/casper-install.iso
         timeout-minutes: 40
 
-      - name: Test the installer (QEMU IA32: full auto-install + verify)
+      - name: "Test the installer (QEMU IA32: full auto-install + verify)"
         run: |
           sudo bash build/test/installer-test.sh \
             /tmp/casper-install.iso /tmp/installer-test
