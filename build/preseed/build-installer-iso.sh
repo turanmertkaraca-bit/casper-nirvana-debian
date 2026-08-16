@@ -45,9 +45,9 @@ cp -a "$SRC/build/packages.list" "$P/"
 cp -a "$SRC/build/tools/grub-casper-postprocess.sh" "$P/"
 chmod +x "$P/casperos-fixup.sh" "$P/grub-casper-postprocess.sh"
 
-# ── 4. bundle the RTL8723BS firmware into the installer initrd ─────────────
-# (so the tablet's Wi-Fi works during the install itself)
-info "injecting RTL8723BS firmware into the installer initrd"
+# ── 4. bundle RTL8723BS firmware + preseed + fix payload INTO the initrd ───
+# (the initrd is always available — no /cdrom mount dependency for preseed)
+info "injecting firmware + preseed + payload into the installer initrd"
 FW="$WORK/fw"
 mkdir -p "$FW"
 curl -fsSL --retry 3 -o "$FW/firmware-realtek.deb" \
@@ -58,22 +58,26 @@ dpkg-deb -x "$FW/firmware-realtek.deb" "$FW/x"
 mkdir -p "$WORK/initrd-overlay/lib/firmware/rtl8723bs" "$WORK/initrd-overlay/lib/firmware/rtl_bt"
 cp -a "$FW/x/lib/firmware/rtl8723bs/." "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null || true
 cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_*" "$WORK/initrd-overlay/lib/firmware/rtl_bt/" 2>/dev/null || true
-ls "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" | head -3
+# preseed + fix payload at the initrd root
+cp -a "$SRC/build/preseed/preseed.cfg" "$WORK/initrd-overlay/preseed.cfg"
+cp -a "$WORK/payload/casperos" "$WORK/initrd-overlay/casperos"
 
 INITRD_GZ=$(ls "$WORK/iso/install.amd/initrd.gz")
 mkdir -p "$WORK/ird"
 cd "$WORK/ird"
 gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null || true
 echo "initrd extracted: $(find . -maxdepth 2 -type d | head -5 | tr '\n' ' ')"
-# merge the firmware INTO the existing lib — never replace it
-mkdir -p "$WORK/ird/lib/firmware"
-cp -a "$WORK/initrd-overlay/lib/firmware/." "$WORK/ird/lib/firmware/"
+# merge the overlay INTO the extracted initrd — never replace anything
+mkdir -p lib/firmware
+cp -a "$WORK/initrd-overlay/lib/firmware/." lib/firmware/
+cp -a "$WORK/initrd-overlay/preseed.cfg" ./preseed.cfg
+cp -a "$WORK/initrd-overlay/casperos" ./casperos
 find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
-echo "initrd rebuilt with firmware: $(ls "$WORK/ird/lib/firmware/rtl8723bs" 2>/dev/null | wc -l) rtl8723bs files"
+echo "initrd rebuilt: $(ls lib/firmware/rtl8723bs 2>/dev/null | wc -l) rtl8723bs files, preseed.cfg present"
 
-# ── 5. preseed the boot entries ────────────────────────────────────────────
+# ── 5. preseed the boot entries (preseed lives in the initrd) ──────────────
 info "preseeding boot entries"
-PRESEED_ARGS="auto preseed/file=/cdrom/preseed.cfg console=tty0 console=ttyS0,115200"
+PRESEED_ARGS="auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200"
 # EFI boot (grub.cfg at ISO root for UEFI)
 GRUB_CFG="$WORK/iso/boot/grub/grub.cfg"
 if [ -f "$GRUB_CFG" ]; then

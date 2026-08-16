@@ -46,7 +46,7 @@ qemu-system-x86_64 \
     -drive file="$OUT/target.disk",format=raw,if=ide \
     -netdev user,id=n1 -device e1000,netdev=n1 \
     -kernel "$OUT/vmlinuz" -initrd "$OUT/initrd.gz" \
-    -append "auto preseed/file=/cdrom/preseed.cfg console=tty0 console=ttyS0,115200" \
+    -append "auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200" \
     -serial file:"$OUT/serial-install.log" \
     -display none -vga std -no-reboot \
     > "$OUT/qemu-install.log" 2>&1 &
