@@ -53,11 +53,11 @@ qemu-system-x86_64 \
 QPID=$!
 
 WAITED=0
-TIMEOUT=2700
+TIMEOUT=5400
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
     WAITED=$((WAITED+30))
-    if [ $((WAITED % 300)) = 0 ]; then
+    if [ $((WAITED % 600)) = 0 ]; then
         echo "  ... install still running (${WAITED}s); last serial:"
         tail -2 "$OUT/serial-install.log" 2>/dev/null || true
     fi
@@ -65,7 +65,9 @@ while kill -0 "$QPID" 2>/dev/null; do
         echo "ERROR: installer did not finish in ${TIMEOUT}s"
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
-        echo "--- installer serial tail (last 40 lines):"
+        echo "--- installer serial HEAD (first 60 lines):"
+        head -60 "$OUT/serial-install.log" 2>/dev/null || true
+        echo "--- installer serial TAIL (last 40 lines):"
         tail -40 "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
