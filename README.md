@@ -51,13 +51,13 @@ file** on the stick:
 ### Recommended: self-contained flash ISO on a Ventoy stick
 
 1. Download from the release:
-   - `casper-flash.iso.xz.00` + `casper-flash.iso.xz.sha256`
+   - `casper-flash.iso.xz.00` + `casper-flash.iso.xz.01` + `casper-flash.iso.xz.sha256`
      (the flash ISO **with the CasperOS image already inside**)
    - `casper-flash-esp.zip` (only needed as a fallback, see below)
 2. Decompress to the raw ISO (needs ~7 GB free — phone or PC):
    ```bash
    sha256sum -c casper-flash.iso.xz.sha256
-   cat casper-flash.iso.xz.00 | xz -dc > casper-flash.iso
+   cat casper-flash.iso.xz.?? | xz -dc > casper-flash.iso
    ```
 3. Copy **just `casper-flash.iso`** onto the stick's main partition.
 4. Plug into the tablet, boot, and in the Ventoy menu select
