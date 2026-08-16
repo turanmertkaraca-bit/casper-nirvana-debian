@@ -50,17 +50,27 @@ chmod +x "$P/casperos-fixup.sh" "$P/grub-casper-postprocess.sh"
 info "injecting firmware + preseed + payload into the installer initrd"
 FW="$WORK/fw"
 mkdir -p "$FW"
-# resolve the firmware-realtek pool path from the trixie non-free-firmware index
-FWREL=$(curl -fsSL --retry 3 http://deb.debian.org/debian/dists/trixie/non-free-firmware/binary-all/Packages.gz \
-        | zgrep -A3 '^Package: firmware-realtek$' | grep '^Filename:' | awk '{print $2}')
-[ -n "$FWREL" ] || { echo "ERROR: firmware-realtek not found in the archive" >&2; exit 1; }
-curl -fsSL --retry 3 -o "$FW/firmware-realtek.deb" "http://deb.debian.org/debian/$FWREL"
-dpkg-deb -x "$FW/firmware-realtek.deb" "$FW/x"
-mkdir -p "$WORK/initrd-overlay/lib/firmware/rtl8723bs" "$WORK/initrd-overlay/lib/firmware/rtl_bt"
-cp -a "$FW/x/lib/firmware/rtl8723bs/." "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null || true
-cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_*" "$WORK/initrd-overlay/lib/firmware/rtl_bt/" 2>/dev/null || true
-FW_COUNT=$(ls "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null | wc -l)
-echo "firmware files staged: $FW_COUNT (rtl8723bs)"
+# resolve the firmware-realtek pool path from the trixie non-free-firmware
+# index; the firmware is a nicety (installer Wi-Fi) — never fatal
+FWREL=""
+curl -fsSL --retry 3 -o "$FW/nff.gz" \
+    http://deb.debian.org/debian/dists/trixie/non-free-firmware/binary-all/Packages.gz 2>/dev/null || true
+[ -s "$FW/nff.gz" ] && \
+    gzip -dc "$FW/nff.gz" 2>/dev/null | \
+    awk '/^Package: firmware-realtek$/{f=1} f&&/^Filename:/{print $2; exit}' > "$FW/fwrel.txt" || true
+FWREL=$(cat "$FW/fwrel.txt" 2>/dev/null)
+if [ -z "$FWREL" ]; then
+    FWREL="pool/non-free-firmware/f/firmware-nonfree/firmware-realtek_20250410-2_all.deb"
+fi
+if curl -fsSL --retry 3 -o "$FW/firmware-realtek.deb" "http://deb.debian.org/debian/$FWREL"; then
+    dpkg-deb -x "$FW/firmware-realtek.deb" "$FW/x"
+    mkdir -p "$WORK/initrd-overlay/lib/firmware/rtl8723bs" "$WORK/initrd-overlay/lib/firmware/rtl_bt"
+    cp -a "$FW/x/lib/firmware/rtl8723bs/." "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null || true
+    cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_*" "$WORK/initrd-overlay/lib/firmware/rtl_bt/" 2>/dev/null || true
+    echo "firmware staged: $(ls "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null | wc -l) rtl8723bs files"
+else
+    echo "WARNING: firmware-realtek download failed — installer Wi-Fi may not work on the tablet"
+fi
 # preseed + fix payload at the initrd root
 cp -a "$SRC/build/preseed/preseed.cfg" "$WORK/initrd-overlay/preseed.cfg"
 cp -a "$WORK/payload/casperos" "$WORK/initrd-overlay/casperos"
