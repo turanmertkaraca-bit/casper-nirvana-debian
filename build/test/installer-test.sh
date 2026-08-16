@@ -53,7 +53,9 @@ qemu-system-x86_64 \
 QPID=$!
 
 WAITED=0
+IDLE=0
 TIMEOUT=5400
+LAST_MD5=""
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
     WAITED=$((WAITED+30))
@@ -61,13 +63,32 @@ while kill -0 "$QPID" 2>/dev/null; do
         echo "  ... install still running (${WAITED}s); last serial:"
         tail -2 "$OUT/serial-install.log" 2>/dev/null || true
     fi
+    # fail fast if the installer is stuck at a static screen (no serial
+    # change for 10 minutes = the preseed didn't drive it forward)
+    CUR_MD5=$(md5sum "$OUT/serial-install.log" 2>/dev/null | awk '{print $1}')
+    if [ -n "$CUR_MD5" ] && [ "$CUR_MD5" = "$LAST_MD5" ]; then
+        IDLE=$((IDLE+30))
+    else
+        IDLE=0
+    fi
+    LAST_MD5="$CUR_MD5"
+    if [ "$IDLE" -ge 600 ] && [ "$WAITED" -ge 300 ]; then
+        echo "ERROR: installer screen unchanged for ${IDLE}s (preseed not driving it)"
+        kill "$QPID" 2>/dev/null || true
+        wait "$QPID" 2>/dev/null || true
+        echo "--- installer serial (full, first 300 lines):"
+        head -300 "$OUT/serial-install.log" 2>/dev/null || true
+        echo "--- installer serial tail (last 40 lines):"
+        tail -40 "$OUT/serial-install.log" 2>/dev/null || true
+        exit 1
+    fi
     if [ "$WAITED" -ge "$TIMEOUT" ]; then
         echo "ERROR: installer did not finish in ${TIMEOUT}s"
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
-        echo "--- installer serial HEAD (first 60 lines):"
-        head -60 "$OUT/serial-install.log" 2>/dev/null || true
-        echo "--- installer serial TAIL (last 40 lines):"
+        echo "--- installer serial (full, first 300 lines):"
+        head -300 "$OUT/serial-install.log" 2>/dev/null || true
+        echo "--- installer serial tail (last 40 lines):"
         tail -40 "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
