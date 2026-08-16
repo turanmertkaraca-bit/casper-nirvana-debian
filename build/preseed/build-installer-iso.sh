@@ -61,13 +61,15 @@ cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_*" "$WORK/initrd-overlay/lib/firmware
 ls "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" | head -3
 
 INITRD_GZ=$(ls "$WORK/iso/install.amd/initrd.gz")
-(
-    cd "$WORK/initrd-overlay"
-    mkdir -p "$WORK/ird" && cd "$WORK/ird"
-    gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null || true
-    cp -a "$WORK/initrd-overlay/." .
-    find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
-)
+mkdir -p "$WORK/ird"
+cd "$WORK/ird"
+gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null || true
+echo "initrd extracted: $(find . -maxdepth 2 -type d | head -5 | tr '\n' ' ')"
+# drop the overlay's firmware into place (force — the cpio may leave odd states)
+rm -rf "$WORK/ird/lib"
+cp -a "$WORK/initrd-overlay/lib" "$WORK/ird/"
+find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
+echo "initrd rebuilt with firmware: $(ls "$WORK/ird/lib/firmware/rtl8723bs" 2>/dev/null | wc -l) rtl8723bs files"
 
 # ── 5. preseed the boot entries ────────────────────────────────────────────
 info "preseeding boot entries"
