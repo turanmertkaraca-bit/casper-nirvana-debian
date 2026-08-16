@@ -122,6 +122,28 @@ jobs:
           sudo bash build/preseed/build-installer-iso.sh /tmp/casper-install.iso
         timeout-minutes: 40
 
+      - name: "Sanity: stock netinst boots in this QEMU setup?"
+        run: |
+          # boot the ORIGINAL ISO for ~70s; the Debian installer's console
+          # must appear (kernel messages + installer UI on the serial)
+          FCODE=$(find /usr/share/OVMF /tmp/ovmf-i32x -name 'OVMF32_CODE*.fd' 2>/dev/null | head -1)
+          [ -n "$FCODE" ] || { curl -fsSL -o /tmp/ovmf-ia32.deb http://deb.debian.org/debian/pool/main/e/edk2/ovmf-ia32_2022.11-6+deb12u2_all.deb; mkdir -p /tmp/ovmf-i32x && dpkg-deb -x /tmp/ovmf-ia32.deb /tmp/ovmf-i32x; FCODE=$(find /tmp/ovmf-i32x -name 'OVMF32_CODE*.fd' | head -1); }
+          cp -f /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/vars.fd 2>/dev/null || true
+          curl -fsSL --retry 3 -o /tmp/netinst-check.iso \
+            https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.6.0-amd64-netinst.iso
+          timeout 70 qemu-system-x86_64 \
+            -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
+            -cdrom /tmp/netinst-check.iso \
+            -netdev user,id=n1 -device e1000,netdev=n1 \
+            -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
+            -drive if=pflash,format=raw,file=/tmp/vars.fd \
+            -serial file:/tmp/netinst-sanity.log \
+            -display none -vga std -no-reboot >/dev/null 2>&1 || true
+          echo "--- stock netinst serial (first 30 lines):"
+          head -30 /tmp/netinst-sanity.log 2>/dev/null || true
+          grep -aqE 'kernel|linux|Debian|install|debconf' /tmp/netinst-sanity.log \
+            && echo "STOCK NETINST BOOTS" || { echo "STOCK NETINST FAILED TO BOOT"; tail -20 /tmp/netinst-sanity.log 2>/dev/null || true; }
+
       - name: "Test the installer (QEMU IA32: full auto-install + verify)"
         run: |
           sudo bash build/test/installer-test.sh \
