@@ -136,6 +136,7 @@ jobs:
           path: |
             /tmp/casper-install.iso
             /tmp/installer-test/verify.log
+            /tmp/installer-test/serial-install.log
             /tmp/installer-test/qemu-install.log
           retention-days: 30
 

@@ -94,15 +94,17 @@ done
 cp -a "$SRC/build/preseed/preseed.cfg" "$WORK/iso/preseed.cfg"
 cp -a "$WORK/payload/casperos" "$WORK/iso/casperos"
 
-# ── 7. rebuild the hybrid ISO ──────────────────────────────────────────────
-info "rebuilding the installer ISO"
-xorriso -as mkisofs \
-    -o "$OUT" \
-    -V "CasperOS Install" \
-    -J -joliet-long -cache-inodes \
-    -b isolinux/isolinux.bin -c isolinux/boot.cat \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
-    -isohybrid-gpt-basdat -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
-    "$WORK/iso" 2>&1 | tail -2
+# ── 7. rebuild the ISO by REPLAYING the original boot setup ────────────────
+# (a fresh mkisofs rebuild breaks the El Torito EFI entry; replay preserves
+#  the original ISO's boot configuration exactly and just swaps files)
+info "rebuilding the installer ISO (boot replay)"
+xorriso -indev "$NETINST" -outdev "$OUT" \
+    -boot_image any replay \
+    -update "$WORK/iso/install.amd/initrd.gz" /install.amd/initrd.gz \
+    -update "$WORK/iso/boot/grub/grub.cfg" /boot/grub/grub.cfg \
+    -update "$WORK/iso/isolinux/txt.cfg" /isolinux/txt.cfg \
+    -update "$WORK/iso/isolinux/gtk.cfg" /isolinux/gtk.cfg \
+    -map "$WORK/iso/preseed.cfg" /preseed.cfg \
+    -map "$WORK/payload/casperos" /casperos \
+    2>&1 | tail -3
 ok "installer ISO: $OUT ($(stat -c %s "$OUT") bytes)"
