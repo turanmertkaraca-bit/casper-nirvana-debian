@@ -74,7 +74,7 @@ QPID=$!
 
 WAITED=0
 IDLE=0
-TIMEOUT=5400
+TIMEOUT=7200
 LAST_SYSMD5=""
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
