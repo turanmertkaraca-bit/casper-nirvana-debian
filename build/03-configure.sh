@@ -12,6 +12,23 @@ REPORT="$B/report.txt"
 
 log() { printf '  %s\n' "$*"; }
 
+# ── failure reporting ──────────────────────────────────────────────────────
+# This script runs chrooted inside the half-built image, where lib.sh's trap
+# does not apply, and it is the longest, least observable stage: "exit 1"
+# from here could be any of ~200 commands. Name the command that died, both
+# on the console and as a CI annotation.
+casper_inner_fail() {           # $1 = exit status, $2 = line number
+    local rc="$1" line="$2"
+    printf '\n\033[1;31m✗ FAILED (exit %s) inside the image at line %s\033[0m\n  command: %s\n' \
+        "$rc" "$line" "$BASH_COMMAND" >&2
+    printf '::error::03-configure exit %s at line %s -> %s\n' \
+        "$rc" "$line" "$BASH_COMMAND" >&2
+}
+set -o errtrace 2>/dev/null || true
+# $LINENO inside the trap is the line of the command that failed;
+# ${BASH_LINENO[0]} is 0 for top-level commands, so it is useless here.
+trap 'rc=$?; ln=$LINENO; casper_inner_fail "$rc" "$ln"' ERR
+
 # ── 1. apt sources (deb822, updateable image) ──────────────────────────────
 log "writing apt sources (trixie + security, all components)"
 # remove the one-liner mmdebstrap wrote so there's no duplicate-source noise
