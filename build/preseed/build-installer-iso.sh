@@ -25,9 +25,25 @@ rm -rf "$WORK" && mkdir -p "$WORK/iso" "$WORK/payload/casperos"
 # ── 1. fetch the Debian netinst ISO ────────────────────────────────────────
 if [ -z "$NETINST" ] || [ ! -f "$NETINST" ]; then
     info "downloading Debian 13 amd64 netinst ISO"
-    NETINST="$WORK/debian-netinst.iso"
-    curl -fsSL --retry 3 -o "$NETINST" \
-        https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.6.0-amd64-netinst.iso
+    # Never hardcode debian-13.X.Y-...: the filename changes with every point
+    # release, and a stale name turns into a 404 that curl -f reports as
+    # exit 22 - which is exactly how this build used to die in one second.
+    # SHA256SUMS lists whatever the current point release actually is.
+    NETBASE="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd"
+    SUMS=$(curl -fsSL --retry 3 "$NETBASE/SHA256SUMS") \
+        || { echo "could not fetch $NETBASE/SHA256SUMS" >&2; exit 1; }
+    NETNAME=$(printf '%s\n' "$SUMS" | awk '$2 ~ /-netinst\.iso$/ {print $2; exit}')
+    [ -n "$NETNAME" ] \
+        || { echo "no *-netinst.iso listed in $NETBASE/SHA256SUMS" >&2; exit 1; }
+    WANT=$(printf '%s\n' "$SUMS" | awk -v n="$NETNAME" '$2 == n {print $1; exit}')
+    info "current netinst: $NETNAME"
+    NETINST="$WORK/$NETNAME"
+    curl -fsSL --retry 3 -o "$NETINST" "$NETBASE/$NETNAME" \
+        || { echo "download failed: $NETBASE/$NETNAME" >&2; exit 1; }
+    GOT=$(sha256sum "$NETINST" | cut -d' ' -f1)
+    [ "$GOT" = "$WANT" ] \
+        || { echo "sha256 mismatch for $NETNAME (got $GOT, expected $WANT)" >&2; exit 1; }
+    ok "netinst verified against SHA256SUMS"
 fi
 info "netinst: $NETINST ($(stat -c %s "$NETINST") bytes)"
 

@@ -52,10 +52,27 @@ ok "host tools present"
 [ -e /usr/share/debootstrap/scripts/"$SUITE" ] || ln -sf sid /usr/share/debootstrap/scripts/"$SUITE"
 
 # ── stages ─────────────────────────────────────────────────────────────────
-bash "$SRC/01-prepare.sh"   --root "$ROOT" --img "$IMG" --size "$SIZE"
-bash "$SRC/02-bootstrap.sh" --root "$ROOT" --suite "$SUITE" --mirror "$MIRROR"
-bash "$SRC/04-assemble.sh"  --root "$ROOT" --img "$IMG" --build "$SRC"
-bash "$SRC/05-finalize.sh"  --root "$ROOT" --img "$IMG"
+# A bare "exit code 1" in CI tells you nothing about which of the four stages
+# died, and the stages echo hundreds of lines each. Announce the failure where
+# it happens, and keep the stage's own exit status so apt's 100 still shows.
+run_stage() {
+    local n="$1" script="$2"; shift 2
+    local rc=0
+    info "stage $n/5: $script"
+    bash "$script" "$@" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf '\n\033[1;31m✗ STAGE %s FAILED (%s) with exit code %s\033[0m\n' \
+            "$n" "$script" "$rc" >&2
+        printf '\033[1;31m  the failing command is the last one printed above\033[0m\n' >&2
+        exit "$rc"
+    fi
+    ok "stage $n/5 done"
+}
+
+run_stage 1 "$SRC/01-prepare.sh"   --root "$ROOT" --img "$IMG" --size "$SIZE"
+run_stage 2 "$SRC/02-bootstrap.sh" --root "$ROOT" --suite "$SUITE" --mirror "$MIRROR"
+run_stage 3 "$SRC/04-assemble.sh"  --root "$ROOT" --img "$IMG" --build "$SRC"
+run_stage 4 "$SRC/05-finalize.sh"  --root "$ROOT" --img "$IMG"
 
 ok "BUILD COMPLETE → ${IMG}"
 info "report: $(dirname "$IMG")/casper-build-report.txt"
