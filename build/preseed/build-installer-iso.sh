@@ -263,8 +263,9 @@ B32=$(xorriso -indev "$OUT" -find / -name 'BOOTIA32.EFI' 2>/dev/null | tr -d "'"
 [ -n "$B32" ] || die "BOOTIA32.EFI missing from the finished ISO — 32-bit UEFI would fail"
 xorriso -osirrox on -indev "$OUT" -extract "$B32" /tmp/bootia32-check.efi >/dev/null 2>&1 \
     || die "could not extract BOOTIA32.EFI ($B32) from the finished ISO"
-file /tmp/bootia32-check.efi | grep -q 'PE32' \
-    || die "BOOTIA32.EFI is not a 32-bit PE32 EFI application"
+MACHINE=$(bash "$SRC/build/tools/pe-machine.sh" /tmp/bootia32-check.efi 2>/dev/null) || MACHINE="unreadable"
+[ "$MACHINE" = "014c" ] \
+    || die "BOOTIA32.EFI has PE machine 0x$MACHINE, expected 0x014c (IA-32)"
 rm -f /tmp/bootia32-check.efi
 ok "verified: EFI/BOOT/BOOTIA32.EFI present and PE32 (IA-32)"
 ok "installer ISO: $OUT ($(stat -c %s "$OUT") bytes)"

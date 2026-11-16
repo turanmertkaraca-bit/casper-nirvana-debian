@@ -60,8 +60,23 @@ ls -la "$ROOT/boot/efi/EFI/BOOT/" "$ROOT/boot/efi/EFI/CasperOS/" 2>/dev/null | g
 if find "$ROOT/boot/efi" -iname '*.efi' | grep -qiE 'x64|grubx64'; then
     die "x86_64 EFI binaries found on ESP — 32-bit UEFI would not boot"
 fi
-file "$ROOT/boot/efi/EFI/BOOT/BOOTIA32.EFI" | grep -qiE '80386|IA-32' || die "BOOTIA32.EFI is not an IA-32 binary!"
-ok "ESP verified: only IA-32 (32-bit) EFI bootloader present"
+
+# The old check here was `file ... | grep -qiE '80386|IA-32'`, which depends on
+# file(1)'s wording and failed on the CI host with a binary that is in fact
+# i386. Read the PE machine field instead (014c = IA-32) and print what was
+# actually found, so a real failure is distinguishable from a wording change.
+BOOT32="$ROOT/boot/efi/EFI/BOOT/BOOTIA32.EFI"
+[ -f "$BOOT32" ] || die "grub-install did not write EFI/BOOT/BOOTIA32.EFI — 32-bit UEFI would not boot"
+MACHINE=$(bash "$BUILD/tools/pe-machine.sh" "$BOOT32" 2>/dev/null) || MACHINE="unreadable"
+info "BOOTIA32.EFI machine=0x$MACHINE  [file(1): $(file -b "$BOOT32" 2>/dev/null || echo n/a)]"
+[ "$MACHINE" = "014c" ] || die "BOOTIA32.EFI has PE machine 0x$MACHINE, expected 0x014c (IA-32)"
+
+# every EFI binary that ships on the ESP has to be 32-bit, not just this one
+while IFS= read -r efi; do
+    m=$(bash "$BUILD/tools/pe-machine.sh" "$efi" 2>/dev/null) || m="unreadable"
+    [ "$m" = "014c" ] || die "${efi#$ROOT} has PE machine 0x$m, expected 0x014c (IA-32)"
+done < <(find "$ROOT/boot/efi" -iname '*.efi')
+ok "ESP verified: every EFI binary is IA-32 (32-bit)"
 
 # ── fstab by UUID ──────────────────────────────────────────────────────────
 ROOTUUID=$(blkid -s UUID -o value "${LOOP}p2")
