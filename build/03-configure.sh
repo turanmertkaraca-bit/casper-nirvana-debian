@@ -107,30 +107,24 @@ mkdir -p /home/lvy/.config
 cp -a "$B/configs/home/skel/.config/monitors.xml" /home/lvy/.config/monitors.xml
 chown -R lvy:lvy /home/lvy
 
-# skel for any future users, and GDM session config
+# skel for any future users
 mkdir -p /etc/skel/.config
 cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
-mkdir -p /var/lib/gdm3/.config
-cp -a "$B/configs/home/skel/.config/monitors.xml" /var/lib/gdm3/.config/monitors.xml
-chown -R Debian-gdm:Debian-gdm /var/lib/gdm3/.config 2>/dev/null || true
 
-# ── 8. dconf system defaults (UX + extensions + OSK + rotation-adjacent) ───
-log "compiling dconf system databases"
-# discover actually-installed extension UUIDs and enable them
-{
-    echo "[org/gnome/shell]"
-    uuids=""
-    for d in /usr/share/gnome-shell/extensions/*/; do
-        [ -f "$d/metadata.json" ] || continue
-        u=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/metadata.json" | head -1 | sed 's/.*"uuid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-        [ -n "$u" ] || continue
-        uuids="$uuids,'$u'"
-    done
-    if [ -n "$uuids" ]; then
-        echo "enabled-extensions=[${uuids#,}]"
-    fi
-} > /etc/dconf/db/local.d/10-casper-extensions
-dconf update
+# ── 8. display manager: greetd, autologin straight into Hyprland ───────────
+# No greeter and no GNOME. The session itself is a static file in the config
+# tree (/etc/greetd/config.toml), so there is nothing to generate here — the
+# machine boots, greetd drops to lvy and starts the compositor.
+log "enabling greetd (autologin -> Hyprland)"
+systemctl enable greetd.service 2>/dev/null || true
+systemctl disable gdm3.service 2>/dev/null || true
+# greetd owns VT1. Debian enables getty@tty1 by default, and two things
+# fighting over one VT means greetd fails to take the console.
+systemctl disable getty@tty1.service 2>/dev/null || true
+systemctl mask getty@tty1.service 2>/dev/null || true
+# Text console as the recovery path: with no login screen left, this is the
+# only way back in if the compositor refuses to start on the GPU.
+systemctl enable getty@tty2.service 2>/dev/null || true
 
 # ── 9. plymouth splash theme ───────────────────────────────────────────────
 log "setting plymouth theme: casper-splash"
@@ -230,8 +224,8 @@ fi
 
 # ── 13b. optional Hyprland + Caelestia shell layer ────────────────────────
 # Best-effort: writes to report.txt and never fails the build, so a shell that
-# does not compile still leaves a complete GNOME image (GNOME stays the
-# default session; Hyprland is opt-in from the login screen).
+# does not compile still leaves a bootable system (greetd falls back to a
+# shell on VT1, and getty@tty2 is always available).
 log "installing Hyprland + Caelestia shell layer (experimental)"
 bash "$B/hypr/install-hyprshell.sh" || echo "WARN: hyprshell layer failed" >> "$REPORT"
 

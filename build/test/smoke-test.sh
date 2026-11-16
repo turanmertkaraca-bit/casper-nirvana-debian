@@ -180,12 +180,14 @@ echo ---SWAP
 cat /proc/swaps
 echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
-echo ---DCONF
-ls /etc/dconf/db/local >/dev/null 2>&1 && echo DCONF_DB_OK
-grep -c screen-keyboard-enabled /etc/dconf/db/local.d/00-casper-desktop
-cat /etc/dconf/db/local.d/10-casper-extensions
-ls /var/lib/gdm3/.config/monitors.xml /home/lvy/.config/monitors.xml 2>/dev/null
-grep -c '<rotation>right</rotation>' /var/lib/gdm3/.config/monitors.xml
+echo ---SESSION
+systemctl is-enabled greetd.service >/dev/null 2>&1 && echo GREETD_ENABLED
+command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
+command -v qs >/dev/null 2>&1 && echo QS_PRESENT
+ls /etc/xdg/hypr/hyprland.conf >/dev/null 2>&1 && echo HYPR_CONF_OK
+cat /etc/casperos/hyprshell.status 2>/dev/null
+ls /home/lvy/.config/monitors.xml 2>/dev/null
+grep -c '<rotation>right</rotation>' /home/lvy/.config/monitors.xml
 echo ---PLYMOUTH
 grep -i theme /etc/plymouth/plymouthd.conf
 echo ---BOOTFILES
@@ -250,7 +252,7 @@ run_boot() {
         python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$lt" \
             > "$OUT/serial-$name.log" 2>&1 || true
 
-        screendump "$monport" "$OUT/gdm-$name.ppm" 2>/dev/null || true
+        screendump "$monport" "$OUT/session-$name.ppm" 2>/dev/null || true
         sleep 2
         kill "$qpid" 2>/dev/null || true
         wait "$qpid" 2>/dev/null || true
@@ -272,7 +274,7 @@ run_boot() {
     echo "--- $name serial tail:"
     tail -12 "$OUT/serial-$name.log" 2>/dev/null || true
     echo "--- $name screenshots:"
-    ppm_visible "$OUT/gdm-$name.ppm" 2>/dev/null || true
+    ppm_visible "$OUT/session-$name.ppm" 2>/dev/null || true
     ppm_visible "$OUT/early-$name.ppm" 2>/dev/null || true
     echo "=== boot $name done"
 }
@@ -309,12 +311,12 @@ chk "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
 done
-chk "$(grepq 'DCONF_DB_OK' "$s1")" "dconf system db compiled"
-chk "$(grepq 'screen-keyboard-enabled' "$s1")" "OSK enabled in dconf defaults"
-chk "$(grepq 'enabled-extensions' "$s1")" "extensions list baked in dconf"
-chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (GDM)"
+chk "$(grepq 'GREETD_ENABLED' "$s1")" "greetd enabled as the session launcher"
+chk "$(grepq 'HYPRLAND_PRESENT' "$s1")" "Hyprland installed"
+chk "$(grepq 'HYPR_CONF_OK' "$s1")" "system Hyprland config present"
+chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (user session)"
 chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
-chk "$(ppm_visible "$OUT/gdm-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "GDM screenshot shows content (not black)"
+chk "$(ppm_visible "$OUT/session-boot1.ppm" >/dev/null 2>&1 && echo 1 || echo 0)" "session screenshot shows content (not black)"
 
 echo ""
 echo "══════════════════════ 5.15.165 (fallback kernel, via GRUB) ════════"
@@ -327,8 +329,8 @@ chk "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-5\.' "$j2")" "kernel 5.15.165 booted (jou
 chk "$(grepq 'i2c_designware.disable_pm=1' "$j2")" "legacy I2C params in cmdline (journal)"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$j2")" "polling mode param in cmdline (journal)"
 chk "$(grepq 'intel_idle.max_cstate=1' "$j2")" "common params still applied (journal)"
-chk "$(grepq 'gdm' "$j2")" "GDM started (journal)"
-echo "  (boot2 screenshot: $(ppm_visible "$OUT/gdm-boot2.ppm" >/dev/null 2>&1 && echo content || echo black) — informational: qemu stdvga + llvmpipe differs from the real i915 path)"
+chk "$(grepq 'greetd' "$j2")" "greetd started (journal)"
+echo "  (boot2 screenshot: $(ppm_visible "$OUT/session-boot2.ppm" >/dev/null 2>&1 && echo content || echo black) — informational: qemu stdvga + llvmpipe differs from the real i915 path)"
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"

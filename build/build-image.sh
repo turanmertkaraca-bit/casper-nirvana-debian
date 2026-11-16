@@ -4,7 +4,7 @@
 #  Produces a dd-able raw disk image for the Casper Nirvana N220 / N240:
 #    - Debian 13 trixie, amd64 userland, 32-bit UEFI bootloader (Bay Trail)
 #    - Dual kernel: Debian 6.12 (default) + Ubuntu mainline 5.15.165 (fallback)
-#    - User "lvy" (no password), Turkey locale, GNOME/Wayland, pre-tuned
+#    - User "lvy" (no password), Turkey locale, Hyprland session, pre-tuned
 #  Requires: root, ~12 GB free disk, network. Tested on Debian/Ubuntu hosts.
 #  Usage: sudo ./build-image.sh [--root DIR] [--img FILE] [--size 6G]
 # ═══════════════════════════════════════════════════════════════════════════

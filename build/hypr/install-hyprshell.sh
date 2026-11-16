@@ -19,7 +19,7 @@
 #
 # FAILURE POLICY
 # Best effort, never fatal. If anything here fails the image is still a
-# complete, bootable GNOME system: the reason goes to report.txt and to
+# bootable system: the reason goes to report.txt and to
 # /etc/casperos/hyprshell.status, and the guarded autostart in
 # /etc/xdg/hypr/hyprland.conf leaves a usable bare Hyprland session.
 set -uo pipefail

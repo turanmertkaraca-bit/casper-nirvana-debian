@@ -1,5 +1,9 @@
 # CasperOS — Debian 13 trixie package set (amd64).
-# Hand-picked GNOME + apps. Install-Recommends is off system-wide.
+# Hand-picked, no metapackages. Install-Recommends is off system-wide.
+#
+# There is NO GNOME here. It was the largest single consumer of both image
+# space and RAM, and this tablet only ever runs one session: Hyprland with
+# the Caelestia shell (Quickshell), installed by build/hypr/install-hyprshell.sh.
 
 # ── base system ────────────────────────────────────────────────────────────
 systemd
@@ -62,39 +66,28 @@ firmware-intel-sound
 firmware-misc-nonfree
 intel-microcode
 
-# ── GNOME desktop (hand-picked, no metapackages) ───────────────────────────
-gnome-shell
-gnome-session
-gnome-settings-daemon
-gnome-control-center
-gdm3
+# ── session: greetd autologin -> Hyprland -> Caelestia ─────────────────────
+# greetd replaces GDM: it is a few hundred KB, needs no GTK, and starts the
+# session directly (see /etc/greetd/config.toml). Hyprland and Quickshell
+# themselves come from trixie-backports in the hypr layer.
+greetd
 polkitd
-dconf-cli
 dconf-gsettings-backend
 gsettings-desktop-schemas
-nautilus
 gvfs
 gvfs-backends
 udisks2
-gnome-console
-gnome-text-editor
-gnome-keyring
+thunar
+thunar-volman
+foot
 network-manager
-network-manager-gnome
-iio-sensor-proxy
 xdg-desktop-portal
-xdg-desktop-portal-gnome
 xdg-desktop-portal-gtk
 xdg-user-dirs
 adwaita-icon-theme
-fonts-cantarell
 fonts-dejavu-core
-ibus
-ibus-gtk3
-ibus-gtk4
 power-profiles-daemon
 xwayland
-xserver-xorg-input-libinput
 
 # ── touch / input tooling ──────────────────────────────────────────────────
 libinput-tools
@@ -130,9 +123,3 @@ wine
 wine64
 winetricks
 winbind
-
-# ── GNOME shell extensions (pre-enabled via dconf) ─────────────────────────
-gnome-shell-extension-manager
-gnome-shell-extension-appindicator
-gnome-shell-extension-desktop-icons-ng
-gnome-shell-extension-caffeine

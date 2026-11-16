@@ -15,12 +15,12 @@ Everything is baked in — nothing runs after first boot:
 - **Dual kernel**: Debian 6.12 (default) + Ubuntu mainline **5.15.165**
   (fallback — the kernel known good on this device, with its correct legacy
   I2C parameters applied to that entry only).
-- **Landscape boot**: the panel orientation fix you'd otherwise set in
-  GNOME Settings ("Right") is baked into `monitors.xml` for both GDM and the
-  user session.
+- **Landscape boot**: the panel is physically portrait, so the compositor
+  rotates it 90° (`monitor = …, transform, 1` in the Hyprland config) — the
+  setting you'd otherwise hunt for in a display panel that does not exist.
 - **User `lvy`** (no password), Turkey locale `tr_TR.UTF-8`, timezone
-  `Europe/Istanbul`, keyboard `tr`, GNOME on **Wayland** with the on-screen
-  keyboard enabled at login and in the session.
+  `Europe/Istanbul`, keyboard `tr`, **greetd autologin straight into
+  Hyprland**. No login screen, no password prompt, no GDM.
 - **Audio, working on first boot**: PipeWire 1.4 + WirePlumber 0.5 tuned for
   the RT5640 (2048-frame quantum, 48 kHz locked, PCM never suspended — that
   is the "first second of sound is missing" and the 5-second pop). The
@@ -57,11 +57,18 @@ Everything is baked in — nothing runs after first boot:
   Trail cannot hardware-decode; h264ify forces the H.264 stream the GPU
   actually decodes. Cap playback at ≤1080p/30fps.
 
-## Hyprland + Caelestia shell (experimental, opt-in)
+## The desktop: Hyprland + Caelestia shell
 
-The image ships two Wayland sessions. **GNOME stays the default**; the second
-one is *Hyprland* in the login screen's gear menu, and it costs one reboot to
-get back if it misbehaves.
+**GNOME is not on this image.** It was the single largest consumer of both
+image space and RAM, and this tablet runs exactly one session: greetd
+autologins, starts Hyprland, which starts the Caelestia shell. There is no
+login screen — user `lvy` never had a password anyway.
+
+What replaced it: `greetd` (a few hundred KB, no GTK) as the session launcher,
+`thunar` for files, `foot` for a terminal, `nmtui` for networks, and the
+Hyprland portal for screen sharing. Everything GNOME-specific — tracker, ibus,
+gnome-keyring, nautilus, gvfs's GNOME bits, the extension stack — is gone from
+the package list, not merely masked.
 
 - **Hyprland 0.55 + Quickshell 0.3** come from `trixie-backports`, pinned at
   priority 100 (`/etc/apt/preferences.d/99-casper-backports`) so `apt upgrade`
@@ -82,16 +89,18 @@ get back if it misbehaves.
 
 Known gaps in this session, all real:
 
-- **No on-screen keyboard.** GNOME's OSK does not exist here, so on the tablet
-  itself a Wi-Fi password needs a USB keyboard until something like
-  squeekboard is wired up.
+- **No on-screen keyboard at all.** GNOME's OSK left with GNOME and nothing
+  replaces it yet, so typing a Wi-Fi password on the tablet itself needs a USB
+  keyboard until something like squeekboard is wired up.
 - **The shell is pointer-first** (`showOnHover`, drag thresholds, hover
   popouts). Touch works at the compositor level — Hyprland 0.53+ fixed the
   fullscreen touch bug — but Caelestia was not designed for a finger.
 - **v1.1.0 predates Quickshell 0.3**, so QML/API mismatches are possible. They
   surface as errors inside the session, not at build time.
 - **None of this session has been verified on the tablet.** The build only
-  proves it compiles and installs.
+  proves it compiles and installs. Because this is now the *only* session, a
+  compositor that cannot start means no GUI: greetd then drops to a shell on
+  VT1, and `Ctrl+Alt+F2` gives a console.
 
 ## Flashing / installing (no OS required — Ventoy USB stick)
 

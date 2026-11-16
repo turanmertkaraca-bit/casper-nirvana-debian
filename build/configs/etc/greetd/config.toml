@@ -1,0 +1,20 @@
+# CasperOS — greetd starts the session directly; there is no login screen.
+#
+# Why no greeter: this tablet usually has no keyboard attached, the user has
+# no password, and GNOME (which used to own the greeter through GDM) is not
+# on the image any more. greetd still runs as root and drops privileges into
+# a normal lvy session, so this is an autologin, not a root session.
+#
+# Recovery path, in order:
+#   - Ctrl+Alt+F2 -> text console (getty@tty2 is enabled for exactly this)
+#   - hold Shift at boot -> GRUB menu -> 5.15 fallback kernel
+#   - the installer ISO's interactive mode
+[terminal]
+vt = 1
+
+# The guard matters: the Hyprland layer is built best-effort, so if it did
+# not make it into this image, fall back to a shell on VT1 instead of leaving
+# the tablet on a black screen with no way in.
+[default_session]
+command = "command -v Hyprland >/dev/null 2>&1 && exec Hyprland || exec /bin/bash -l"
+user = "lvy"

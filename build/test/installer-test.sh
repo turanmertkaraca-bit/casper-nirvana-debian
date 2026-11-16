@@ -6,7 +6,7 @@
 #      flash-ISO test) on a blank disk (auto-install, qemu user-net)
 #   2. after the installer reboots, boots the INSTALLED system from that disk
 #   3. verifies the CasperOS fixes are in place (login as lvy, cmdline,
-#      services, kernels, dconf)
+#      services, kernels, session)
 #
 # Usage: sudo ./installer-test.sh <installer.iso> <outdir>
 set -euo pipefail
@@ -220,8 +220,8 @@ M="$OUT/mnt"
 chk "$([ -f "$M/etc/libinput/local-overrides.quirks" ] && echo 1 || echo 0)" "libinput quirk present"
 chk "$(grep -q 'intel_idle.max_cstate=1' "$M/etc/default/grub.d/99-casper.cfg" 2>/dev/null && echo 1 || echo 0)" "GRUB kernel params baked"
 chk "$([ -f "$M/boot/vmlinuz-5.15"* ] && echo 1 || echo 0)" "5.15 fallback kernel installed"
-chk "$([ -d "$M/etc/dconf/db/local.d" ] && echo 1 || echo 0)" "dconf system defaults present"
-chk "$(grep -q 'enabled-extensions' "$M/etc/dconf/db/local.d/10-casper-extensions" 2>/dev/null && echo 1 || echo 0)" "extensions pre-enabled"
+chk "$(grep -q 'exec Hyprland' "$M/etc/greetd/config.toml" 2>/dev/null && echo 1 || echo 0)" "greetd starts Hyprland (session)"
+chk "$([ -f "$M/etc/xdg/hypr/hyprland.conf" ] && echo 1 || echo 0)" "Hyprland session config installed"
 chk "$(grep -q 'tmpfs /tmp' "$M/etc/fstab" 2>/dev/null && echo 1 || echo 0)" "tmpfs /tmp in fstab"
 chk "$(grep -q 'zram' "$M/etc/default/zramswap" 2>/dev/null && echo 1 || echo 0)" "zram config present"
 chk "$(grep -q 'lvy ALL=(ALL) NOPASSWD' "$M/etc/sudoers.d/90-casper-lvy" 2>/dev/null && echo 1 || echo 0)" "lvy sudo setup"

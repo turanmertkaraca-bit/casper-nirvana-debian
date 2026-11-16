@@ -58,30 +58,20 @@ mkdir -p /home/lvy/.config /etc/skel/.config
 cp -a "$B/configs/home/skel/.config/monitors.xml" /home/lvy/.config/monitors.xml
 cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
 chown -R lvy:lvy /home/lvy
-# GDM (login screen) gets the same landscape rotation
-mkdir -p /var/lib/gdm3/.config
-cp -a "$B/configs/home/skel/.config/monitors.xml" /var/lib/gdm3/.config/monitors.xml
-chown -R Debian-gdm:Debian-gdm /var/lib/gdm3/.config 2>/dev/null || true
 
 # ── 4. locale/keyboard defaults (already tr via preseed; make it stick) ────
 log "locale/keyboard"
 update-locale LANG=tr_TR.UTF-8 LANGUAGE=tr:en 2>/dev/null || true
 setupcon --save 2>/dev/null || true
 
-# ── 5. dconf system defaults + extension list ──────────────────────────────
-log "dconf databases"
-{
-    echo "[org/gnome/shell]"
-    uuids=""
-    for d in /usr/share/gnome-shell/extensions/*/; do
-        [ -f "$d/metadata.json" ] || continue
-        u=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/metadata.json" | head -1 | sed 's/.*"uuid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
-        [ -n "$u" ] || continue
-        uuids="$uuids,'$u'"
-    done
-    [ -n "$uuids" ] && echo "enabled-extensions=[${uuids#,}]"
-} > /etc/dconf/db/local.d/10-casper-extensions
-dconf update
+# ── 5. display manager: greetd (autologin -> Hyprland, no greeter, no GNOME) ─
+log "greetd"
+systemctl enable greetd.service 2>/dev/null || true
+systemctl disable gdm3.service 2>/dev/null || true
+# greetd owns VT1; getty@tty1 would fight it for the console
+systemctl disable getty@tty1.service 2>/dev/null || true
+systemctl mask getty@tty1.service 2>/dev/null || true
+systemctl enable getty@tty2.service 2>/dev/null || true
 
 # ── 6. plymouth theme ──────────────────────────────────────────────────────
 log "plymouth theme"
