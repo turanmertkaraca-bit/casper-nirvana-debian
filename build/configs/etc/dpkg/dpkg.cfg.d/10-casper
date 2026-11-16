@@ -2,6 +2,8 @@
 # Drop man pages / docs / non-tr translation catalogs (keep Turkish + English)
 path-exclude=/usr/share/man/*
 path-exclude=/usr/share/doc/*
+path-exclude=/usr/share/gtk-doc/*
+path-exclude=/usr/share/lintian/*
 path-exclude=/usr/share/locale/*
 path-include=/usr/share/locale/tr*
 path-include=/usr/share/locale/en*

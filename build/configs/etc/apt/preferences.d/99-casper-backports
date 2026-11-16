@@ -1,0 +1,11 @@
+# CasperOS — apt pinning for trixie-backports.
+#
+# Priority 100 = "only if explicitly asked for" (or already installed). Without
+# this, adding the backports suite would let apt pull newer libc, systemd and
+# i915-era userspace into a stable image on the next `apt upgrade`.
+#
+# The Hyprland / Quickshell stack is installed with an explicit
+# `-t trixie-backports`, which overrides this pin for exactly those packages.
+Package: *
+Pin: release n=trixie-backports
+Pin-Priority: 100

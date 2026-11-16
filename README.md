@@ -21,19 +21,34 @@ Everything is baked in — nothing runs after first boot:
 - **User `lvy`** (no password), Turkey locale `tr_TR.UTF-8`, timezone
   `Europe/Istanbul`, keyboard `tr`, GNOME on **Wayland** with the on-screen
   keyboard enabled at login and in the session.
-- **Audio**: PipeWire + WirePlumber with suspend disabled (no first-second
-  sound cut, no 5-second pop), SST firmware + UCM symlink baked in.
-- **Performance**: zram 1.5 GB + swappiness 180, earlyoom (kills the browser,
-  never the desktop), BFQ, schedutil, THP off, zstd initramfs, masked
-  background services, VA-API hardware decode (i965 driver) for Firefox/mpv.
+- **Audio, working on first boot**: PipeWire 1.4 + WirePlumber 0.5 tuned for
+  the RT5640 (2048-frame quantum, 48 kHz locked, PCM never suspended — that
+  is the "first second of sound is missing" and the 5-second pop). The
+  SST DSP firmware is present, and the ALSA UCM profile is aliased to the
+  name the kernel actually reports, so the mixer and speaker controls exist
+  instead of the card showing up with no profile.
+- **Performance**: zram 2 GB (lz4) + swappiness 180, earlyoom (kills the
+  browser, never the desktop), BFQ, schedutil, THP off, BBR + fq on the
+  RTL8723BS Wi-Fi, masked background services, VA-API hardware decode (i965
+  driver) for Firefox/mpv.
+- **Small boot footprint**: zstd initramfs cut down to the modules the root
+  device actually needs (`MODULES=dep` instead of Debian's `most`), which is
+  less to read off the eMMC and less RAM held while booting. Man pages, docs,
+  gtk-doc and lintian data are excluded at dpkg level, so they are never
+  written to the disk in the first place.
 - First-boot: root partition auto-resizes to fill the eMMC, and the firmware
   NVRAM boot entry is repaired once.
 
 ## What you must know (disclosures)
 
-- **`mitigations=off` is set** (kernel cmdline). It is a deliberate, big
-  speedup for Silvermont (~20–40% on syscalls) and reasonable on a personal
-  media tablet — not for machines running untrusted code.
+- **Memory-integrity and hardening features are OFF**. The kernel cmdline
+  carries `mitigations=off init_on_alloc=0 init_on_free=0 page_poison=0
+  slub_debug=- randomize_kstack_offset=0 audit=0 apparmor=0`, and AppArmor
+  is masked. `mitigations=off` alone is a deliberate, big speedup for
+  Silvermont (~20–40% on syscalls); the init/poison/randomisation knobs each
+  remove a memset or RNG call from hot allocation paths. This is fine for a
+  personal media tablet and wrong for anything running untrusted code —
+  there is no memory-corruption barrier left.
 - **User `lvy` has no password** and passwordless `sudo`. Anyone with the
   tablet can use it. The lock screen is a swipe, not security.
 - **Secure Boot must be OFF** (mainline Ubuntu kernels are unsigned).
@@ -42,9 +57,62 @@ Everything is baked in — nothing runs after first boot:
   Trail cannot hardware-decode; h264ify forces the H.264 stream the GPU
   actually decodes. Cap playback at ≤1080p/30fps.
 
+## Hyprland + Caelestia shell (experimental, opt-in)
+
+The image ships two Wayland sessions. **GNOME stays the default**; the second
+one is *Hyprland* in the login screen's gear menu, and it costs one reboot to
+get back if it misbehaves.
+
+- **Hyprland 0.55 + Quickshell 0.3** come from `trixie-backports`, pinned at
+  priority 100 (`/etc/apt/preferences.d/99-casper-backports`) so `apt upgrade`
+  cannot drag libc/systemd forward with them.
+- **[caelestia-shell](https://github.com/caelestia-dots/shell) is built from
+  source at `v1.1.0`.** That pin is forced, not lazy: every release from
+  v1.2.0 onward hard-gates its CMake on Qt 6.9
+  (`qt_standard_project_setup(REQUIRES 6.9)`) and links libcava/aubio through
+  pkg-config. trixie has Qt 6.8.2 — and no Qt 6.9+ even in backports — and no
+  libcava development package at all, so those versions cannot be built here.
+  v1.1.0 is the last tag with neither requirement.
+- **Blur and animations are off** in `/etc/xdg/hypr/hyprland.conf`. On a 4-EU
+  Gen7 GPU they are the difference between usable and stuttering; the shell
+  still looks correct without them.
+- `/etc/casperos/hyprshell.status` records whether the shell compiled in this
+  build and which versions went in. If it starts with `failed:`, the session
+  still launches — you get bare Hyprland, and **Super+Return** opens `foot`.
+
+Known gaps in this session, all real:
+
+- **No on-screen keyboard.** GNOME's OSK does not exist here, so on the tablet
+  itself a Wi-Fi password needs a USB keyboard until something like
+  squeekboard is wired up.
+- **The shell is pointer-first** (`showOnHover`, drag thresholds, hover
+  popouts). Touch works at the compositor level — Hyprland 0.53+ fixed the
+  fullscreen touch bug — but Caelestia was not designed for a finger.
+- **v1.1.0 predates Quickshell 0.3**, so QML/API mismatches are possible. They
+  surface as errors inside the session, not at build time.
+- **None of this session has been verified on the tablet.** The build only
+  proves it compiles and installs.
+
 ## Flashing / installing (no OS required — Ventoy USB stick)
 
 Three ways, in order of preference:
+
+### 32-bit UEFI, Ventoy, and RAM during install
+
+Bay Trail firmware is **IA32-only**, and Debian's amd64 netinst ships no 32-bit
+EFI loader at all — that is why a stock Debian ISO silently refuses to start on
+this tablet. The installer built here carries its own `EFI/BOOT/BOOTIA32.EFI`
+(checked at build time: it must exist and be a PE32 IA-32 binary), both as a
+file in the ISO tree — the path Ventoy ≥1.0.30 chainloads — and as the ISO's
+EFI boot image for real firmware.
+
+The IA32 menu boots the **text installer** on purpose: no GTK, roughly a
+quarter of the graphical installer's RAM, which matters when the machine only
+has 2 GB and the install itself runs `apt` in a chroot. There are two entries —
+automatic (preseeded, hands-off) and interactive.
+
+Ventoy itself: use a Ventoy ≥1.0.30 stick, copy the ISO on, boot it. Secure
+Boot must be off.
 
 ### 1. Debian-installer ISO (visible, keyboard-friendly)
 

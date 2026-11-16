@@ -171,7 +171,8 @@ systemctl enable systemd-timesyncd.service 2>/dev/null || true
 for svc in \
     tracker-miner-fs-3.service tracker-miner-rss-3.service tracker-extract-3.service tracker-writeback-3.service \
     evolution-addressbook-factory.service evolution-calendar-factory.service evolution-source-registry.service \
-    ModemManager.service fwupd.service unattended-upgrades.service \
+    ModemManager.service fwupd.service unattended-upgrades.service apparmor.service \
+    colord.service packagekit.service packagekit-offline-update.service \
     NetworkManager-wait-online.service apt-daily.service apt-daily-upgrade.service \
     apt-daily.timer apt-daily-upgrade.timer; do
     systemctl disable "$svc" 2>/dev/null || true
@@ -226,6 +227,13 @@ else
 fi
 [ -f /etc/firefox-esr/policies.json ] || [ -f /usr/lib/firefox-esr/distribution/policies.json ] \
     || echo "WARN: firefox policies.json missing" >> "$REPORT"
+
+# ── 13b. optional Hyprland + Caelestia shell layer ────────────────────────
+# Best-effort: writes to report.txt and never fails the build, so a shell that
+# does not compile still leaves a complete GNOME image (GNOME stays the
+# default session; Hyprland is opt-in from the login screen).
+log "installing Hyprland + Caelestia shell layer (experimental)"
+bash "$B/hypr/install-hyprshell.sh" || echo "WARN: hyprshell layer failed" >> "$REPORT"
 
 # ── 14. sizes for the run report ───────────────────────────────────────────
 du -sx --exclude=build / 2>/dev/null | awk '{printf "IMAGE_ROOTFS_BYTES=%d\n", $1*1024}' >> "$REPORT" || true

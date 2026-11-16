@@ -88,40 +88,167 @@ cp -a "$WORK/initrd-overlay/casperos" ./casperos
 find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
 echo "initrd rebuilt: $(ls lib/firmware/rtl8723bs 2>/dev/null | wc -l) rtl8723bs files, preseed.cfg present"
 
-# ── 5. preseed the boot entries (preseed lives in the initrd) ──────────────
-info "preseeding boot entries"
+# ── 5. preseed the ISO's own BIOS/x64 boot entries (preseed lives in initrd) ─
+info "preseeding the ISO's own boot entries"
 PRESEED_ARGS="auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200"
-# EFI boot (grub.cfg at ISO root for UEFI)
 GRUB_CFG="$WORK/iso/boot/grub/grub.cfg"
 if [ -f "$GRUB_CFG" ]; then
-    sed -i "0,/^[[:space:]]*linux[[:space:]]/s//\tlinux\t/" "$GRUB_CFG" 2>/dev/null || true
-    awk '
-        { if (!done && $0 ~ /linux[ \t]+\/install\.amd\/vmlinuz/ && $0 !~ /preseed\/file=/) { print $0 " '"$PRESEED_ARGS"'"; done=1; next } print }
+    awk -v A="$PRESEED_ARGS" '
+        { if (!done && $0 ~ /linux[ \t]+\/install\.amd\/vmlinuz/ && $0 !~ /preseed\/file=/) { print $0 " " A; done=1; next } print }
     ' "$GRUB_CFG" > "$GRUB_CFG.new" && mv "$GRUB_CFG.new" "$GRUB_CFG"
 fi
-# BIOS boot (isolinux)
 for f in "$WORK/iso/isolinux/txt.cfg" "$WORK/iso/isolinux/gtk.cfg"; do
     [ -f "$f" ] || continue
-    awk '
-        { if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " preseed/file=/preseed.cfg auto"; done=1; next } print }
-    ' "$f" > "$f.new" && mv "$f.new" "$f"
+    awk '{ if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " preseed/file=/preseed.cfg auto"; done=1; next } print }' \
+        "$f" > "$f.new" && mv "$f.new" "$f"
 done
 
 # ── 6. drop the preseed + payload into the ISO tree ────────────────────────
 cp -a "$SRC/build/preseed/preseed.cfg" "$WORK/iso/preseed.cfg"
 cp -a "$WORK/payload/casperos" "$WORK/iso/casperos"
 
-# ── 7. rebuild the ISO by REPLAYING the original boot setup ────────────────
-# (a fresh mkisofs rebuild breaks the El Torito EFI entry; replay preserves
-#  the original ISO's boot configuration exactly and just swaps files)
-info "rebuilding the installer ISO (boot replay)"
-xorriso -indev "$NETINST" -outdev "$OUT" \
-    -boot_image any replay \
-    -update "$WORK/iso/install.amd/initrd.gz" /install.amd/initrd.gz \
-    -update "$WORK/iso/boot/grub/grub.cfg" /boot/grub/grub.cfg \
-    -update "$WORK/iso/isolinux/txt.cfg" /isolinux/txt.cfg \
-    -update "$WORK/iso/isolinux/gtk.cfg" /isolinux/gtk.cfg \
-    -map "$WORK/iso/preseed.cfg" /preseed.cfg \
-    -map "$WORK/payload/casperos" /casperos \
-    2>&1 | tail -3
+die() { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
+
+# ── 7. 32-bit UEFI boot — the reason stock netinst won't start on this tablet ─
+# Debian's amd64 netinst ships ONLY EFI/BOOT/BOOTX64.EFI. Bay Trail firmware is
+# IA32-only: it looks for EFI/BOOT/BOOTIA32.EFI, finds nothing, and falls back
+# to the firmware menu. That is the entire "it won't boot from Ventoy" symptom.
+# Ventoy >= 1.0.30 chainloads EFI/BOOT/BOOTIA32.EFI straight out of the ISO
+# tree, so the file has to exist for the stick to work at all.
+info "building 32-bit UEFI (IA32) boot loaders"
+
+if ! command -v grub-mkstandalone >/dev/null 2>&1 || [ ! -d /usr/lib/grub/i386-efi ]; then
+    info "installing GRUB ia32/x64 EFI tooling on the build host"
+    apt-get update -qq || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        grub-efi-ia32-bin grub-efi-amd64-bin dosfstools >/dev/null 2>&1 || true
+fi
+command -v grub-mkstandalone >/dev/null 2>&1 \
+    || die "grub-mkstandalone missing — install grub-efi-ia32-bin on the build host"
+[ -d /usr/lib/grub/i386-efi ] \
+    || die "no /usr/lib/grub/i386-efi — install grub-efi-ia32-bin on the build host"
+
+EFI_CFG="$WORK/efi-grub.cfg"
+cat > "$EFI_CFG" <<'EFICFG'
+set timeout=30
+insmod iso9660
+insmod part_gpt
+insmod part_msdos
+insmod fat
+insmod search_fs_file
+insmod linux
+insmod normal
+
+menuentry "CasperOS installer - automatic, text mode (lowest RAM)" {
+    search --no-floppy --file --set=root /install.amd/vmlinuz
+    linux /install.amd/vmlinuz auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 ---
+    initrd /install.amd/initrd.gz
+}
+
+menuentry "CasperOS installer - interactive text mode" {
+    search --no-floppy --file --set=root /install.amd/vmlinuz
+    linux /install.amd/vmlinuz console=tty0 console=ttyS0,115200 ---
+    initrd /install.amd/initrd.gz
+}
+EFICFG
+
+EFI_MODS="iso9660 part_gpt part_msdos fat search search_fs_file search_label linux echo normal all_video gfxterm font serial"
+mkdir -p "$WORK/efi/EFI/BOOT"
+
+build_efi() {   # $1 = grub target, $2 = module dir, $3 = output file
+    grub-mkstandalone -O "$1" -d "$2" \
+        --modules="$EFI_MODS" --install-modules="$EFI_MODS" \
+        -o "$3" "boot/grub/grub.cfg=$EFI_CFG"
+}
+
+build_efi i386-efi /usr/lib/grub/i386-efi "$WORK/efi/EFI/BOOT/BOOTIA32.EFI" \
+    || die "could not build BOOTIA32.EFI"
+ok "BOOTIA32.EFI built ($(stat -c %s "$WORK/efi/EFI/BOOT/BOOTIA32.EFI") bytes)"
+
+# The 64-bit loader is built from the same config so ONE FAT image serves both
+# firmwares - each looks up its own arch's filename and nothing else.
+if [ -d /usr/lib/grub/x86_64-efi ]; then
+    if build_efi x86_64-efi /usr/lib/grub/x86_64-efi "$WORK/efi/EFI/BOOT/BOOTX64.EFI"; then
+        ok "BOOTX64.EFI built"
+    else
+        echo "note: x86_64 loader not built (32-bit boot is unaffected)"
+    fi
+fi
+
+# ── 8. FAT image holding the EFI loaders (the El Torito EFI payload) ────────
+EFI_IMG="$WORK/efi.img"
+rm -f "$EFI_IMG"
+dd if=/dev/zero of="$EFI_IMG" bs=1M count=16 status=none
+mkfs.vfat -F 16 -n CASPEREFI "$EFI_IMG" >/dev/null || die "mkfs.vfat failed (need dosfstools)"
+mkdir -p "$WORK/efimnt"
+mount -o loop "$EFI_IMG" "$WORK/efimnt" || die "could not mount the FAT EFI image"
+mkdir -p "$WORK/efimnt/EFI/BOOT"
+cp -a "$WORK/efi/EFI/BOOT/." "$WORK/efimnt/EFI/BOOT/"
+cp -a "$EFI_CFG" "$WORK/efimnt/EFI/BOOT/grub.cfg"
+sync
+umount "$WORK/efimnt"
+
+# Also in the ISO tree itself: this is the exact path Ventoy chainloads.
+# Reuse Debian's own EFI directory if it shipped one under a different case —
+# creating a second /EFI next to an existing /efi makes the ISO9660 level
+# collide and mkisofs aborts.
+EFI_TREE=""
+for cand in "$WORK/iso/EFI/BOOT" "$WORK/iso/efi/boot" "$WORK/iso/Efi/Boot"; do
+    [ -d "$cand" ] && { EFI_TREE="$cand"; break; }
+done
+[ -n "$EFI_TREE" ] || EFI_TREE="$WORK/iso/EFI/BOOT"
+mkdir -p "$EFI_TREE" "$WORK/iso/boot/grub"
+cp -a "$WORK/efi/EFI/BOOT/BOOTIA32.EFI" "$EFI_TREE/BOOTIA32.EFI"
+[ -f "$WORK/efi/EFI/BOOT/BOOTX64.EFI" ] && \
+    cp -a "$WORK/efi/EFI/BOOT/BOOTX64.EFI" "$EFI_TREE/BOOTX64.EFI"
+cp -a "$EFI_IMG" "$WORK/iso/boot/grub/efi.img"
+
+# ── 9. rebuild the ISO with BOTH firmware paths ────────────────────────────
+# BIOS: reuse Debian's own El Torito loader from the extracted tree, so the
+# stick still boots on machines without UEFI. EFI: our image, which carries
+# the ia32 loader the tablet needs.
+BIOS_IMG=""
+BIOS_KIND=""
+if [ -f "$WORK/iso/boot/grub/i386-pc/eltorito.img" ]; then
+    BIOS_IMG="boot/grub/i386-pc/eltorito.img"; BIOS_KIND="grub"
+elif [ -f "$WORK/iso/isolinux/isolinux.bin" ]; then
+    BIOS_IMG="isolinux/isolinux.bin"; BIOS_KIND="isolinux"
+fi
+
+OUT_TMP="$OUT.tmp"
+if [ "$BIOS_KIND" = "grub" ]; then
+    info "rebuilding ISO: BIOS (GRUB eltorito) + IA32/x64 EFI"
+    xorriso -as mkisofs -r -J -joliet-long -l \
+        -b "$BIOS_IMG" -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
+        -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+        -V "CasperOS 13 amd64" \
+        -o "$OUT_TMP" "$WORK/iso" 2>&1 | tail -3 \
+        || die "xorriso rebuild failed (BIOS grub + EFI)"
+elif [ "$BIOS_KIND" = "isolinux" ]; then
+    info "rebuilding ISO: BIOS (isolinux) + IA32/x64 EFI"
+    xorriso -as mkisofs -r -J -joliet-long -l \
+        -b "$BIOS_IMG" -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
+        -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+        -V "CasperOS 13 amd64" \
+        -o "$OUT_TMP" "$WORK/iso" 2>&1 | tail -3 \
+        || die "xorriso rebuild failed (isolinux + EFI)"
+else
+    info "rebuilding ISO: EFI only (netinst shipped no BIOS loader)"
+    xorriso -as mkisofs -r -J -joliet-long -l \
+        -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
+        -V "CasperOS 13 amd64" \
+        -o "$OUT_TMP" "$WORK/iso" 2>&1 | tail -3 \
+        || die "xorriso rebuild failed (EFI only)"
+fi
+mv -f "$OUT_TMP" "$OUT"
+
+# ── 10. assert the tablet can actually boot the result ─────────────────────
+B32=$(xorriso -indev "$OUT" -find / -name 'BOOTIA32.EFI' 2>/dev/null | tr -d "'" | head -1)
+[ -n "$B32" ] || die "BOOTIA32.EFI missing from the finished ISO — 32-bit UEFI would fail"
+xorriso -osirrox on -indev "$OUT" -extract "$B32" /tmp/bootia32-check.efi >/dev/null 2>&1 \
+    || die "could not extract BOOTIA32.EFI ($B32) from the finished ISO"
+file /tmp/bootia32-check.efi | grep -q 'PE32' \
+    || die "BOOTIA32.EFI is not a 32-bit PE32 EFI application"
+rm -f /tmp/bootia32-check.efi
+ok "verified: EFI/BOOT/BOOTIA32.EFI present and PE32 (IA-32)"
 ok "installer ISO: $OUT ($(stat -c %s "$OUT") bytes)"

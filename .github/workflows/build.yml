@@ -115,7 +115,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            xorriso isolinux cpio gzip xz-utils qemu-system-x86 qemu-utils ovmf curl
+            xorriso isolinux cpio gzip xz-utils qemu-system-x86 qemu-utils ovmf curl \
+            grub-efi-ia32-bin grub-efi-amd64-bin grub-pc-bin dosfstools mtools file
 
       - name: Build the CasperOS installer ISO (preseeded netinst)
         run: |
