@@ -202,14 +202,26 @@ cat "$OUT/verify.log"
 
 # ── verdicts ───────────────────────────────────────────────────────────────
 pass=0; fail=0
-chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
+chk() {
+    if [ "$1" = "1" ]; then
+        pass=$((pass+1)); echo "  PASS: $2"
+    else
+        fail=$((fail+1)); echo "  FAIL: $2"
+        # one-line annotation per failed check: this script's verdict is a
+        # failure COUNT, so without this CI only says "exit 1" and the
+        # names of the broken checks are buried in the log
+        printf '::error::CHECK FAILED: %s\n' "$2" >&2
+    fi
+}
 V="$OUT/verify.log"
 B="$OUT/serial-boot.log"
 I="$OUT/serial-install.log"
 chk "$(grep -q '### LOGIN PROMPT SHOWN' "$V" && echo 1 || echo 0)" "installed system boots to a login prompt"
 chk "$(grep -aq 'casperos-fixup: fixup complete' "$I" && echo 1 || echo 0)" "CasperOS fixup ran at install time"
 chk "$(grep -aq 'Finished installation\|Rebooting' "$I" && echo 1 || echo 0)" "install completed"
-chk "$(grep -aq 'lvy' "$B" && echo 1 || echo 0)" "lvy shown on the login screen"
+# No login screen any more: greetd autologins into Hyprland. Check that the
+# session is wired up on the installed disk rather than looking for a greeter.
+chk "$([ -e "$M/etc/systemd/system/graphical.target.wants/greetd.service" ] && echo 1 || echo 0)" "greetd enabled at install time";
 
 # the fixup's effects are best checked from the installed disk:
 LOOP=$(losetup -f)
@@ -219,7 +231,9 @@ mount "${LOOP}p2" "$OUT/mnt" 2>/dev/null || mount "${LOOP}p1" "$OUT/mnt" 2>/dev/
 M="$OUT/mnt"
 chk "$([ -f "$M/etc/libinput/local-overrides.quirks" ] && echo 1 || echo 0)" "libinput quirk present"
 chk "$(grep -q 'intel_idle.max_cstate=1' "$M/etc/default/grub.d/99-casper.cfg" 2>/dev/null && echo 1 || echo 0)" "GRUB kernel params baked"
-chk "$([ -f "$M/boot/vmlinuz-5.15"* ] && echo 1 || echo 0)" "5.15 fallback kernel installed"
+# the unquoted glob used to make this `[ -f a b ]` ("too many arguments")
+# whenever more than one vmlinuz-5.15* existed
+chk "$(ls "$M"/boot/vmlinuz-5.15* >/dev/null 2>&1 && echo 1 || echo 0)" "5.15 fallback kernel installed"
 chk "$(grep -q 'exec Hyprland' "$M/etc/greetd/config.toml" 2>/dev/null && echo 1 || echo 0)" "greetd starts Hyprland (session)"
 chk "$([ -f "$M/etc/xdg/hypr/hyprland.conf" ] && echo 1 || echo 0)" "Hyprland session config installed"
 chk "$(grep -q 'tmpfs /tmp' "$M/etc/fstab" 2>/dev/null && echo 1 || echo 0)" "tmpfs /tmp in fstab"

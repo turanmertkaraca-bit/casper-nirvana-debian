@@ -13,13 +13,24 @@ while [ $# -gt 0 ]; do
 done
 
 LOOP=$(losetup -j "$IMG" | cut -d: -f1)
-[ -n "$LOOP" ] || die "no loop device for $IMG"
+if [ -z "$LOOP" ]; then
+    # stage 1's loop device is expected to still exist; re-attaching is
+    # harmless (both partitions are already formatted) and far better than
+    # dying here, which is what used to happen silently
+    warn "no loop device for $IMG - re-attaching"
+    losetup -P "$(losetup -f)" "$IMG" || die "could not attach a loop device to $IMG"
+    LOOP=$(losetup -j "$IMG" | cut -d: -f1)
+fi
+[ -n "$LOOP" ] || die "still no loop device for $IMG"
+info "loop: $LOOP (root ${LOOP}p2, ESP ${LOOP}p1)"
 
 # ── mounts for the chroot ──────────────────────────────────────────────────
-mount -t proc proc "$ROOT/proc"
-mount -t sysfs sysfs "$ROOT/sys"
-mount --bind /dev "$ROOT/dev"
-mount --bind /dev/pts "$ROOT/dev/pts"
+# Each mount is named: a bare command failing under set -e reports only
+# "exit 1", which says nothing about which mount is the problem.
+mount -t proc  proc  "$ROOT/proc"     || die "mount proc failed"
+mount -t sysfs sysfs "$ROOT/sys"      || die "mount sysfs failed"
+mount --bind /dev "$ROOT/dev"         || die "bind-mount /dev failed"
+mount --bind /dev/pts "$ROOT/dev/pts" || die "bind-mount /dev/pts failed"
 mkdir -p "$ROOT/boot/efi"
 mount "${LOOP}p1" "$ROOT/boot/efi" || die "failed to mount ESP (${LOOP}p1)"
 mkdir -p "$ROOT/build"

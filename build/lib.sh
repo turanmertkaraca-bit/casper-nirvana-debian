@@ -5,7 +5,13 @@ set -u
 info() { printf '\033[1;36m→\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!\033[0m %s\n' "$*"; }
-die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+die()  {
+    printf '\033[1;31m✗\033[0m %s\n' "$*" >&2
+    # an explicit exit 1 never reaches the ERR trap above, so a `die` message
+    # would exist only in the (unreadable) log — surface it as an annotation
+    printf '::error::%s\n' "$*" >&2
+    exit 1
+}
 
 # ── failure reporting ──────────────────────────────────────────────────────
 # set -e turns any failing command into "exit 1" with no clue which command it
