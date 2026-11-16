@@ -64,6 +64,9 @@ run_stage() {
         printf '\n\033[1;31m✗ STAGE %s FAILED (%s) with exit code %s\033[0m\n' \
             "$n" "$script" "$rc" >&2
         printf '\033[1;31m  the failing command is the last one printed above\033[0m\n' >&2
+        # also as an annotation, so CI shows the stage without scrolling
+        printf '::error::STAGE %s failed: %s (exit %s)\n' \
+            "$n" "${script##*/}" "$rc" >&2
         exit "$rc"
     fi
     ok "stage $n/5 done"
