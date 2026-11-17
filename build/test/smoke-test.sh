@@ -173,9 +173,8 @@ cat /proc/cmdline
 echo ---EFI
 ls /sys/firmware/efi >/dev/null 2>&1 && echo UEFI_OK || echo UEFI_MISSING
 echo ---SERVICES
-for s in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor power-profiles-daemon; do
-    echo "svc $s = $(systemctl is-active $s 2>/dev/null)"
-done
+# one line per command: qemu-serial.py sends each line on its own
+for s in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor power-profiles-daemon; do echo "svc $s = $(systemctl is-active $s 2>/dev/null)"; done
 echo ---SWAP
 cat /proc/swaps
 echo ---THP
@@ -249,7 +248,10 @@ run_boot() {
         # boot-to-login normally takes ~90s (the flake hangs forever)
         local lt=600
         [ "$attempt" -gt 1 ] && lt=240
-        python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$lt" \
+        # the selftest script is the single source of truth for what runs in
+        # the guest: qemu-serial.py used to carry its own copy of the command
+        # list, and the two drifted apart
+        python3 "$SRC/test/qemu-serial.py" "$OUT/ser-$name.sock" "$lt" "$OUT/selftest.sh" \
             > "$OUT/serial-$name.log" 2>&1 || true
 
         screendump "$monport" "$OUT/session-$name.ppm" 2>/dev/null || true

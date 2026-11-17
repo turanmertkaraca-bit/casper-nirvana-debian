@@ -77,7 +77,27 @@ if r in (0, 1):
 print("### LOGIN OK")
 
 # --- run commands, capture everything, no prompt matching ------------------
-commands = [
+# Commands to run in the guest, one per line in a plain text file (blank lines
+# and #comments skipped). smoke-test.sh passes its own selftest script here so
+# the assertions and the commands that feed them live in ONE place - they used
+# to be duplicated here, which silently left new assertions checking for output
+# no command ever produced.
+def load_commands():
+    if len(sys.argv) > 3:
+        path = sys.argv[3]
+        try:
+            with open(path) as f:
+                cmds = [ln.strip() for ln in f
+                        if ln.strip() and not ln.strip().startswith('#')]
+            if cmds:
+                print("### using selftest command list from %s (%d commands)" % (path, len(cmds)))
+                return cmds
+        except OSError as e:
+            print("### cannot read %s (%s) - using the built-in list" % (path, e))
+    return FALLBACK_COMMANDS
+
+
+FALLBACK_COMMANDS = [
     "echo ===SELFTEST-START===",
     "uname -r",
     "cat /proc/cmdline",
@@ -100,6 +120,8 @@ commands = [
     "systemd-analyze time | tail -1",
     "echo ===SELFTEST-END===",
 ]
+
+commands = load_commands()
 for cmd in commands:
     before = len(buf)
     send(cmd)
