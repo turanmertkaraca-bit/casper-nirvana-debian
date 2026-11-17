@@ -50,7 +50,7 @@ echo "=== phase 1: installing (this takes a while) ==="
  python3 -c "
 import socket
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind(('10.0.2.2', 514))
+s.bind(('0.0.0.0', 514))   # 10.0.2.2 exists only inside qemu's user-net
 with open('$OUT/installer-syslog.log','ab') as f:
     while True:
         d, _ = s.recvfrom(65535)
@@ -75,23 +75,30 @@ QPID=$!
 WAITED=0
 IDLE=0
 TIMEOUT=7200
-LAST_SYSMD5=""
+LAST_PROGRESS=""
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
     WAITED=$((WAITED+30))
     if [ $((WAITED % 600)) = 0 ]; then
-        echo "  ... install still running (${WAITED}s); last syslog:"
+        echo "  ... install still running (${WAITED}s); sizes: syslog=$(stat -c %s "$OUT/installer-syslog.log" 2>/dev/null || echo 0) serial=$(stat -c %s "$OUT/serial-install.log" 2>/dev/null || echo 0)"
         tail -2 "$OUT/installer-syslog.log" 2>/dev/null || true
+        tail -3 "$OUT/serial-install.log" 2>/dev/null || true
     fi
-    # fail fast if the installer is stuck (no syslog growth for 10 minutes)
-    CUR_SYSMD5=$(md5sum "$OUT/installer-syslog.log" 2>/dev/null | awk '{print $1}')
-    if [ -n "$CUR_SYSMD5" ] && [ "$CUR_SYSMD5" = "$LAST_SYSMD5" ]; then
+    # Fail fast if the installer is stuck. Progress is measured on BOTH logs:
+    # the remote syslog is a UDP feed to 10.0.2.2 (which is only meaningful
+    # from inside qemu's user-net, so the listener can legitimately receive
+    # nothing), while the serial console always carries the installer's
+    # output. Watching syslog alone declared a healthy install stuck at ~11
+    # minutes, every single run.
+    CUR_PROGRESS=$(cat "$OUT/installer-syslog.log" "$OUT/serial-install.log" 2>/dev/null \
+        | md5sum | awk '{print $1}')
+    if [ -n "$CUR_PROGRESS" ] && [ "$CUR_PROGRESS" = "$LAST_PROGRESS" ]; then
         IDLE=$((IDLE+30))
     else
         IDLE=0
     fi
-    LAST_SYSMD5="$CUR_SYSMD5"
-    if [ "$IDLE" -ge 600 ] && [ "$WAITED" -ge 300 ]; then
+    LAST_PROGRESS="$CUR_PROGRESS"
+    if [ "$IDLE" -ge 900 ] && [ "$WAITED" -ge 600 ]; then
         echo "ERROR: installer stuck (no syslog growth for ${IDLE}s)"
         printf '::error::installer stopped making progress (no syslog for %ss)\n' "$IDLE" >&2
         grep -aiE 'error|fail|warn|debconf' "$OUT/installer-syslog.log" 2>/dev/null | tail -3 | \
