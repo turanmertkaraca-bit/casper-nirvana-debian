@@ -244,10 +244,11 @@ run_boot() {
         sleep 15
         screendump "$monport" "$OUT/early-$name.ppm" 2>/dev/null || true
 
-        # first attempt gets a generous timeout; retries assume the
-        # boot-to-login normally takes ~90s (the flake hangs forever)
-        local lt=600
-        [ "$attempt" -gt 1 ] && lt=240
+        # Boot-to-login takes ~40-90s on a runner; 600s x 3 attempts x 2 kernels
+        # made a single iteration ~45 minutes, which is too slow to debug with.
+        # Retries still exist for the known 5.15 serial flake.
+        local lt=300
+        [ "$attempt" -gt 1 ] && lt=150
         # the selftest script is the single source of truth for what runs in
         # the guest: qemu-serial.py used to carry its own copy of the command
         # list, and the two drifted apart
@@ -344,5 +345,25 @@ echo "  (boot2 screenshot: $(ppm_visible "$OUT/session-boot2.ppm" >/dev/null 2>&
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"
-[ "$fail" = 0 ] || echo "SOME CHECKS FAILED — inspect $OUT/"
+
+# ── diagnostics ────────────────────────────────────────────────────────────
+# When something fails, the reason is in the guest's serial log or journal -
+# both live only inside the artifacts, which a CI reader without a token
+# cannot open. Emit the highest-signal lines as annotations (limit: 10).
+if [ "$fail" -gt 0 ]; then
+    echo "=== diagnostic annotations ==="
+    for f in serial-boot1.log serial-boot2.log; do
+        [ -s "$OUT/$f" ] || continue
+        tail -3 "$OUT/$f" | while IFS= read -r l; do
+            [ -n "$l" ] && printf '::warning::%s: %s\n' "$f" "${l:0:160}"
+        done
+    done
+    for pat in 'FAILED|failed to' 'timed out|timeout' 'greetd|Hyprland|hyprland' 'growpart|casper-growroot' 'dependency|not found'; do
+        line=$(grep -aiE "$pat" "$OUT/journal-boot1.txt" 2>/dev/null | tail -1)
+        if [ -n "$line" ]; then
+            printf '::warning::journal-boot1 [%s]: %s\n' "$pat" "${line:0:150}"
+        fi
+    done
+    echo "SOME CHECKS FAILED — inspect $OUT/"
+fi
 exit "$fail"
