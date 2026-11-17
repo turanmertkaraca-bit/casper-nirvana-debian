@@ -39,11 +39,22 @@ umount -R "$ROOT" 2>/dev/null || umount -l "$ROOT" 2>/dev/null || true
 losetup -d "$(losetup -j "$IMG" | cut -d: -f1)" 2>/dev/null || true
 sync
 
+# Space breakdown, so shrinking the image is measurable from CI without
+# downloading the artifact: top-level directories of the root filesystem.
+USAGE=""
+while read -r kb path; do
+    [ -n "$path" ] || continue
+    rel=${path#"$ROOT"}
+    USAGE="$USAGE$(printf 'USAGE %6s  %s' "$(numfmt --to=iec "$((kb * 1024))")" "${rel:-/}")\n"
+done < <(du -kx --max-depth=1 "$ROOT" 2>/dev/null | sort -rn | head -9)
+
 IMG_BYTES=$(stat -c %s "$IMG")
 REPORT="$(dirname "$IMG")/casper-build-report.txt"
 {
     echo "IMAGE_BYTES=$IMG_BYTES"
     echo "ROOTFS_BYTES=$ROOTFS_BYTES"
+    echo "SIZE image=$(numfmt --to=iec "$IMG_BYTES") rootfs=$(numfmt --to=iec "$ROOTFS_BYTES")"
+    printf '%b' "$USAGE"
     echo "IMG=$IMG"
 } >> "$REPORT"
 
