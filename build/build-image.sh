@@ -57,9 +57,15 @@ ok "host tools present"
 # it happens, and keep the stage's own exit status so apt's 100 still shows.
 run_stage() {
     local n="$1" script="$2"; shift 2
-    local rc=0
+    local rc=0 t0 t1
+    t0=$(date +%s)
     info "stage $n/5: $script"
     bash "$script" "$@" || rc=$?
+    t1=$(date +%s)
+    # a stage that finishes implausibly fast did not do its work: stage 3 alone
+    # downloads and unpacks ~1 GB, so seconds there means something was skipped
+    printf '::notice::stage %s (%s) took %ss\n' \
+        "$n" "${script##*/}" "$((t1 - t0))" >&2
     if [ "$rc" -ne 0 ]; then
         printf '\n\033[1;31m✗ STAGE %s FAILED (%s) with exit code %s\033[0m\n' \
             "$n" "$script" "$rc" >&2
@@ -69,7 +75,7 @@ run_stage() {
             "$n" "${script##*/}" "$rc" >&2
         exit "$rc"
     fi
-    ok "stage $n/5 done"
+    ok "stage $n/5 done in $((t1 - t0))s"
 }
 
 run_stage 1 "$SRC/01-prepare.sh"   --root "$ROOT" --img "$IMG" --size "$SIZE"
