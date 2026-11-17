@@ -189,6 +189,8 @@ echo "SESSION_FAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | h
 journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -10
 command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
 command -v qs >/dev/null 2>&1 && echo QS_PRESENT
+ls /usr/lib/x86_64-linux-gnu/qt6/qml/Caelestia/qmldir >/dev/null 2>&1 && echo CAELESTIA_OK
+ls /etc/xdg/quickshell/caelestia/shell.qml >/dev/null 2>&1 && echo CAELESTIA_SHELL_QML
 ls /etc/xdg/hypr/hyprland.conf >/dev/null 2>&1 && echo HYPR_CONF_OK
 cat /etc/casperos/hyprshell.status 2>/dev/null
 ls /home/lvy/.config/monitors.xml 2>/dev/null
@@ -331,6 +333,9 @@ done
 chk "$(grepq 'GREETD_ENABLED' "$s1")" "greetd enabled as the session launcher"
 chk "$(grepq 'HYPRLAND_PRESENT' "$s1")" "Hyprland installed"
 chk "$(grepq 'HYPR_CONF_OK' "$s1")" "system Hyprland config present"
+chk "$(grepq 'QS_PRESENT' "$s1")" "quickshell (qs) installed"
+chk "$(grepq 'CAELESTIA_OK' "$s1")" "Caelestia QML module installed"
+chk "$(grepq 'CAELESTIA_SHELL_QML' "$s1")" "Caelestia shell.qml installed"
 chk "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (user session)"
 chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 # The greeter/session launcher actually RUNNING is what QEMU can prove here.
