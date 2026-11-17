@@ -181,9 +181,8 @@ echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo ---SESSION
 systemctl is-enabled greetd.service >/dev/null 2>&1 && echo GREETD_ENABLED
-echo "greetd_active=$(systemctl is-active greetd.service 2>/dev/null)"
-echo "failed_units=$(systemctl --failed --no-legend --no-pager 2>/dev/null | wc -l)"
-journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -6
+echo "SESSION_SUMMARY active=$(systemctl is-active greetd.service 2>/dev/null) sub=$(systemctl show -p SubState --value greetd.service 2>/dev/null) failed=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -3 | tr '\n' ';')"
+journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -10
 command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
 command -v qs >/dev/null 2>&1 && echo QS_PRESENT
 ls /etc/xdg/hypr/hyprland.conf >/dev/null 2>&1 && echo HYPR_CONF_OK
@@ -334,7 +333,7 @@ chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 # A rendered desktop cannot: qemu's std-VGA gives Hyprland no usable DRM/GBM
 # device, so the framebuffer legitimately stays black - on the tablet it is
 # the i915 driver instead. The screenshot is reported, not asserted.
-chk "$(grepq 'greetd_active=active' "$s1")" "greetd session launcher active"
+chk "$(grepq 'SESSION_SUMMARY active=active' "$s1")" "greetd session launcher active"
 echo "  (screenshot: $(ppm_visible "$OUT/session-boot1.ppm" >/dev/null 2>&1 && echo content || echo black) — informational)"
 
 echo ""
@@ -368,7 +367,9 @@ if [ "$fail" -gt 0 ]; then
     done
     # the serial session is the most reliable source: the journal is volatile
     # in the guest, so journal-boot1.txt is often empty
-    for pat in 'greetd_active=' 'failed_units=' 'Hyprland|hyprland' 'cannot open|egl|drm'; do
+    # greetd is the session launcher: if it is not active there is no desktop,
+    # so its unit state and journal are the first thing to show
+    for pat in 'SESSION_SUMMARY' 'greetd\[|greetd\.service' 'pam|PAM' 'cannot open|failed|denied'; do
         line=$(grep -aiE "$pat" "$OUT/serial-boot1.log" 2>/dev/null | tail -1)
         if [ -n "$line" ]; then
             printf '::warning::boot1 serial [%s]: %s\n' "$pat" "${line:0:150}"
