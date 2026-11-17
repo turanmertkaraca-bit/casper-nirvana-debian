@@ -77,5 +77,23 @@ run_stage 2 "$SRC/02-bootstrap.sh" --root "$ROOT" --suite "$SUITE" --mirror "$MI
 run_stage 3 "$SRC/04-assemble.sh"  --root "$ROOT" --img "$IMG" --build "$SRC"
 run_stage 4 "$SRC/05-finalize.sh"  --root "$ROOT" --img "$IMG"
 
+# ── surface the report ─────────────────────────────────────────────────────
+# report.txt and the hypr layer's status only exist inside the artifact (or
+# inside the image), so a build that "succeeds" while half its soft-failing
+# steps did not run looks identical to a healthy one. Echo the lines that
+# matter as annotations, which are readable without downloading anything.
+REPORT_FILE="$(dirname "$IMG")/casper-build-report.txt"
+if [ -f "$REPORT_FILE" ]; then
+    info "build report: $REPORT_FILE"
+    grep -E '^(WARN|FATAL|WINE|IMAGE_ROOTFS_BYTES|HYPR)' "$REPORT_FILE" 2>/dev/null | head -12 | \
+        while IFS= read -r line; do printf '::warning::%s\n' "$line" >&2; done || true
+else
+    printf '::warning::no build report at %s\n' "$REPORT_FILE" >&2
+fi
+if [ -f "$ROOT/etc/casperos/hyprshell.status" ]; then
+    printf '::warning::hyprshell: %s\n' \
+        "$(tr '\n' ' ' < "$ROOT/etc/casperos/hyprshell.status" | cut -c1-200)" >&2
+fi
+
 ok "BUILD COMPLETE → ${IMG}"
-info "report: $(dirname "$IMG")/casper-build-report.txt"
+info "report: $REPORT_FILE"

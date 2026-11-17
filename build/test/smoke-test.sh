@@ -287,7 +287,15 @@ run_boot boot2 45455
 
 # ── verdicts ───────────────────────────────────────────────────────────────
 pass=0; fail=0
-chk() { if [ "$1" = "1" ]; then pass=$((pass+1)); echo "  PASS: $2"; else fail=$((fail+1)); echo "  FAIL: $2"; fi; }
+chk() {
+    if [ "$1" = "1" ]; then
+        pass=$((pass+1)); echo "  PASS: $2"
+    else
+        fail=$((fail+1)); echo "  FAIL: $2"
+        # the verdict is a failure COUNT, so without this CI only shows "exit N"
+        printf '::error::CHECK FAILED: %s\n' "$2" >&2
+    fi
+}
 grepq() { grep -q "$1" "$2" && echo 1 || echo 0; }
 grepqi() { grep -qi "$1" "$2" && echo 1 || echo 0; }
 grepqE() { grep -qE "$1" "$2" && echo 1 || echo 0; }
