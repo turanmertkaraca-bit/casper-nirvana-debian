@@ -181,7 +181,11 @@ echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo ---SESSION
 systemctl is-enabled greetd.service >/dev/null 2>&1 && echo GREETD_ENABLED
-echo "SESSION_SUMMARY active=$(systemctl is-active greetd.service 2>/dev/null) sub=$(systemctl show -p SubState --value greetd.service 2>/dev/null) failed=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -3 | tr '\n' ';')"
+# Short lines only: these travel over a serial login shell, and one long
+# one-liner with nested substitutions is what did not survive the trip.
+echo "SESSION_ACTIVE=$(systemctl is-active greetd.service 2>/dev/null)"
+echo "SESSION_SUB=$(systemctl show -p SubState --value greetd.service 2>/dev/null)"
+echo "SESSION_FAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -2 | cut -d' ' -f1)"
 journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -10
 command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
 command -v qs >/dev/null 2>&1 && echo QS_PRESENT
@@ -333,7 +337,7 @@ chk "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 # A rendered desktop cannot: qemu's std-VGA gives Hyprland no usable DRM/GBM
 # device, so the framebuffer legitimately stays black - on the tablet it is
 # the i915 driver instead. The screenshot is reported, not asserted.
-chk "$(grepq 'SESSION_SUMMARY active=active' "$s1")" "greetd session launcher active"
+chk "$(grepq 'SESSION_ACTIVE=active' "$s1")" "greetd session launcher active"
 echo "  (screenshot: $(ppm_visible "$OUT/session-boot1.ppm" >/dev/null 2>&1 && echo content || echo black) — informational)"
 
 echo ""
@@ -369,7 +373,7 @@ if [ "$fail" -gt 0 ]; then
     # in the guest, so journal-boot1.txt is often empty
     # greetd is the session launcher: if it is not active there is no desktop,
     # so its unit state and journal are the first thing to show
-    for pat in 'SESSION_SUMMARY' 'greetd\[|greetd\.service' 'pam|PAM' 'cannot open|failed|denied'; do
+    for pat in 'SESSION_ACTIVE=|SESSION_SUB=|SESSION_FAILED=' 'greetd\[|greetd\.service' 'pam|PAM' 'cannot open|failed|denied'; do
         line=$(grep -aiE "$pat" "$OUT/serial-boot1.log" 2>/dev/null | tail -1)
         if [ -n "$line" ]; then
             printf '::warning::boot1 serial [%s]: %s\n' "$pat" "${line:0:150}"
