@@ -55,8 +55,6 @@ log "fixing user lvy (null password)"
 passwd -d lvy
 usermod -aG audio,video,input,adm,plugdev,dip lvy 2>/dev/null || true
 mkdir -p /home/lvy/.config /etc/skel/.config
-cp -a "$B/configs/home/skel/.config/monitors.xml" /home/lvy/.config/monitors.xml
-cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
 chown -R lvy:lvy /home/lvy
 
 # ── 4. locale/keyboard defaults (already tr via preseed; make it stick) ────
@@ -67,7 +65,6 @@ setupcon --save 2>/dev/null || true
 # ── 5. display manager: greetd (autologin -> Hyprland, no greeter, no GNOME) ─
 log "greetd"
 systemctl enable greetd.service 2>/dev/null || true
-systemctl disable gdm3.service 2>/dev/null || true
 # greetd owns VT1; getty@tty1 would fight it for the console
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
@@ -131,24 +128,7 @@ for svc in \
 done
 systemctl set-default graphical.target 2>/dev/null || true
 
-# ── 12. wine prefix (as lvy) — best effort ─────────────────────────────────
-log "wine prefix (best effort)"
-runuser -u lvy -- env HOME=/home/lvy WINEPREFIX=/home/lvy/.wine \
-    DISPLAY= WINEDEBUG=-all WINEARCH=win32 wineboot -u >/dev/null 2>&1 || true
-if [ -d /home/lvy/.wine/drive_c ]; then
-    cat > /tmp/waudio.reg <<'EOF'
-REGEDIT4
-
-[HKEY_CURRENT_USER\Software\Wine\Drivers]
-"Audio"="pulse"
-EOF
-    runuser -u lvy -- env HOME=/home/lvy WINEPREFIX=/home/lvy/.wine \
-        WINEDEBUG=-all wine regedit /tmp/waudio.reg >/dev/null 2>&1 || true
-    rm -f /tmp/waudio.reg
-    chown -R lvy:lvy /home/lvy/.wine 2>/dev/null || true
-fi
-
-# ── 13. misc cleanup + live sysctl ─────────────────────────────────────────
+# ── 12. misc cleanup + live sysctl ─────────────────────────────────────────
 sysctl -p /etc/sysctl.d/99-casper-perf.conf >/dev/null 2>&1 || true
 rm -rf /root/.bash_history
 

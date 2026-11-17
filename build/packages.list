@@ -117,9 +117,8 @@ mesa-va-drivers
 libgl1-mesa-dri
 
 # ── apps ───────────────────────────────────────────────────────────────────
+# No Wine: it was the largest block in the image (and pulled in an i386
+# multiarch tree on top), and a 2 GB Atom is not a place to run Windows
+# binaries. mpv plays local media; firefox-esr is the browser.
 firefox-esr
 mpv
-wine
-wine64
-winetricks
-winbind

@@ -114,8 +114,6 @@ FALLBACK_COMMANDS = [
     "ls /etc/dconf/db/local >/dev/null 2>&1 && echo DCONF_DB_OK",
     "grep -c screen-keyboard-enabled /etc/dconf/db/local.d/00-casper-desktop",
     "cat /etc/dconf/db/local.d/10-casper-extensions",
-    "ls /var/lib/gdm3/.config/monitors.xml /home/lvy/.config/monitors.xml 2>/dev/null",
-    "grep -c '<rotation>right</rotation>' /var/lib/gdm3/.config/monitors.xml",
     "grep -i theme /etc/plymouth/plymouthd.conf",
     "ls /boot/vmlinuz-* /boot/initrd.img-*",
     "ls /boot/grub/i386-efi >/dev/null 2>&1 && echo GRUB_IA32_OK || echo GRUB_IA32_MISSING",

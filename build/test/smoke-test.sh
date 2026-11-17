@@ -193,8 +193,7 @@ ls /usr/lib/x86_64-linux-gnu/qt6/qml/Caelestia/qmldir >/dev/null 2>&1 && echo CA
 ls /etc/xdg/quickshell/caelestia/shell.qml >/dev/null 2>&1 && echo CAELESTIA_SHELL_QML
 ls /etc/xdg/hypr/hyprland.conf >/dev/null 2>&1 && echo HYPR_CONF_OK
 cat /etc/casperos/hyprshell.status 2>/dev/null
-ls /home/lvy/.config/monitors.xml 2>/dev/null
-grep -c '<rotation>right</rotation>' /home/lvy/.config/monitors.xml
+grep -q 'transform, 1' /etc/xdg/hypr/hyprland.conf && echo HYPR_ROTATE_OK
 echo ---PLYMOUTH
 grep -i theme /etc/plymouth/plymouthd.conf
 echo ---BOOTFILES
@@ -345,7 +344,7 @@ chks "$(grepq 'HYPR_CONF_OK' "$s1")" "system Hyprland config present"
 chks "$(grepq 'QS_PRESENT' "$s1")" "quickshell (qs) installed"
 chks "$(grepq 'CAELESTIA_OK' "$s1")" "Caelestia QML module installed"
 chks "$(grepq 'CAELESTIA_SHELL_QML' "$s1")" "Caelestia shell.qml installed"
-chks "$(grepq '<rotation>right</rotation>' "$s1")" "landscape rotation baked (user session)"
+chks "$(grepq 'HYPR_ROTATE_OK' "$s1")" "landscape rotation set in the compositor"
 chks "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 # The greeter/session launcher actually RUNNING is what QEMU can prove here.
 # A rendered desktop cannot: qemu's std-VGA gives Hyprland no usable DRM/GBM

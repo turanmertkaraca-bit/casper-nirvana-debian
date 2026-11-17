@@ -91,7 +91,7 @@ run_stage 4 "$SRC/05-finalize.sh"  --root "$ROOT" --img "$IMG"
 REPORT_FILE="$(dirname "$IMG")/casper-build-report.txt"
 if [ -f "$REPORT_FILE" ]; then
     info "build report: $REPORT_FILE"
-    grep -E '^(WARN|FATAL|WINE|HYPR)' "$REPORT_FILE" 2>/dev/null | head -12 | \
+    grep -E '^(WARN|FATAL|HYPR)' "$REPORT_FILE" 2>/dev/null | head -12 | \
         while IFS= read -r line; do printf '::warning::%s\n' "$line" >&2; done || true
     # size and space breakdown go out as notices: a separate quota from
     # warnings, so the numbers survive even when warnings are exhausted

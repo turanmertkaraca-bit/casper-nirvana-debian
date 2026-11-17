@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 3 — runs INSIDE the image chroot (/build is the repo bind-mounted here).
 # Installs the package set, applies every CasperOS config, creates user lvy,
-# installs the 5.15 fallback kernel, preps Wine, and reports results.
+# installs the 5.15 fallback kernel, and reports results.
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
@@ -120,13 +120,11 @@ id lvy >/dev/null 2>&1 || useradd -m -s /bin/bash -G audio,video,input,sudo,adm,
 # useradd leaves the password field unusable ("!") — make it a real null
 # password so login works with just Enter (PAM nullok default on Debian)
 passwd -d lvy
-mkdir -p /home/lvy/.config
-cp -a "$B/configs/home/skel/.config/monitors.xml" /home/lvy/.config/monitors.xml
+mkdir -p /home/lvy/.config /etc/skel/.config
 chown -R lvy:lvy /home/lvy
-
-# skel for any future users
-mkdir -p /etc/skel/.config
-cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
+# No monitors.xml: that was mutter's rotation config. Rotation lives in
+# /etc/xdg/hypr/hyprland.conf now (monitor = , preferred, auto, 1, transform, 1),
+# and mutter's file is ignored by Hyprland.
 
 # ── 8. display manager: greetd, autologin straight into Hyprland ───────────
 # No greeter and no GNOME. The session itself is a static file in the config
@@ -134,7 +132,7 @@ cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
 # machine boots, greetd drops to lvy and starts the compositor.
 log "enabling greetd (autologin -> Hyprland)"
 systemctl enable greetd.service 2>/dev/null || true
-systemctl disable gdm3.service 2>/dev/null || true
+# nothing to disable: gdm3 is not installed in this image at all
 # greetd owns VT1. Debian enables getty@tty1 by default, and two things
 # fighting over one VT means greetd fails to take the console.
 systemctl disable getty@tty1.service 2>/dev/null || true
@@ -191,39 +189,7 @@ for svc in \
 done
 systemctl set-default graphical.target
 
-# ── 12. Wine: build-time prefix with 32-bit auto-detection ─────────────────
-log "wine: initialising prefix as lvy (32-bit support auto-detected)"
-run_wine() {
-    runuser -u lvy -- env HOME=/home/lvy WINEPREFIX=/home/lvy/.wine \
-        DISPLAY= WINEDEBUG=-all "$@"
-}
-# try new-WoW64 (no i386 libs) first: create a WIN32 prefix — works only if
-# wine64 has built-in 32-bit support
-rm -rf /home/lvy/.wine
-run_wine env WINEARCH=win32 wineboot -u >/dev/null 2>&1 || true
-if [ -d /home/lvy/.wine/drive_c ]; then
-    echo "WINE: new WoW64 mode OK (no i386 multiarch needed)" >> "$REPORT"
-    log "wine new-WoW64 mode (32-bit support built in)"
-else
-    echo "WINE: enabling i386 multiarch (classic mode)" >> "$REPORT"
-    log "wine classic mode — adding i386 multiarch"
-    dpkg --add-architecture i386
-    apt-get update -qq
-    apt-get install -y -qq wine32:i386
-    rm -rf /home/lvy/.wine
-    run_wine env WINEARCH=win32 wineboot -u >/dev/null 2>&1 || true
-fi
-cat > /tmp/waudio.reg <<'EOF'
-REGEDIT4
-
-[HKEY_CURRENT_USER\Software\Wine\Drivers]
-"Audio"="pulse"
-EOF
-run_wine wine regedit /tmp/waudio.reg 2>/dev/null || true
-rm -f /tmp/waudio.reg
-chown -R lvy:lvy /home/lvy/.wine 2>/dev/null || true
-
-# ── 13. Firefox policy sanity ──────────────────────────────────────────────
+# ── 12. Firefox policy sanity ──────────────────────────────────────────────
 # Debian's firefox-esr reads policies from /etc/firefox-esr (or the
 # distribution dir next to the binary); put policies.json wherever fits.
 FFP="/build/configs/usr/share/firefox-policies/policies.json"
@@ -239,13 +205,13 @@ fi
 [ -f /etc/firefox-esr/policies.json ] || [ -f /usr/lib/firefox-esr/distribution/policies.json ] \
     || echo "WARN: firefox policies.json missing" >> "$REPORT"
 
-# ── 13b. optional Hyprland + Caelestia shell layer ────────────────────────
+# ── 12b. optional Hyprland + Caelestia shell layer ────────────────────────
 # Best-effort: writes to report.txt and never fails the build, so a shell that
 # does not compile still leaves a bootable system (greetd falls back to a
 # shell on VT1, and getty@tty2 is always available).
 log "installing Hyprland + Caelestia shell layer (experimental)"
 bash "$B/hypr/install-hyprshell.sh" || echo "WARN: hyprshell layer failed" >> "$REPORT"
 
-# ── 14. sizes for the run report ───────────────────────────────────────────
+# ── 13. sizes for the run report ───────────────────────────────────────────
 du -sx --exclude=build / 2>/dev/null | awk '{printf "IMAGE_ROOTFS_BYTES=%d\n", $1*1024}' >> "$REPORT" || true
 log "configuration complete"
