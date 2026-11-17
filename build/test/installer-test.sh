@@ -93,6 +93,9 @@ while kill -0 "$QPID" 2>/dev/null; do
     LAST_SYSMD5="$CUR_SYSMD5"
     if [ "$IDLE" -ge 600 ] && [ "$WAITED" -ge 300 ]; then
         echo "ERROR: installer stuck (no syslog growth for ${IDLE}s)"
+        printf '::error::installer stopped making progress (no syslog for %ss)\n' "$IDLE" >&2
+        grep -aiE 'error|fail|warn|debconf' "$OUT/installer-syslog.log" 2>/dev/null | tail -3 | \
+            while IFS= read -r l; do printf '::warning::syslog: %s\n' "${l:0:150}"; done
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
@@ -104,6 +107,7 @@ while kill -0 "$QPID" 2>/dev/null; do
     fi
     if [ "$WAITED" -ge "$TIMEOUT" ]; then
         echo "ERROR: installer did not finish in ${TIMEOUT}s"
+        printf '::error::installer did not finish in %ss\n' "$TIMEOUT" >&2
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
@@ -218,6 +222,11 @@ B="$OUT/serial-boot.log"
 I="$OUT/serial-install.log"
 chk "$(grep -q '### LOGIN PROMPT SHOWN' "$V" && echo 1 || echo 0)" "installed system boots to a login prompt"
 chk "$(grep -aq 'casperos-fixup: fixup complete' "$I" && echo 1 || echo 0)" "CasperOS fixup ran at install time"
+if ! grep -aq 'casperos-fixup: fixup complete' "$I" 2>/dev/null; then
+    # the fixup is the part most likely to break; show what it said
+    grep -aiE 'casperos-fixup|in-target|error|E: ' "$I" 2>/dev/null | tail -4 | \
+        while IFS= read -r l; do printf '::warning::serial-install: %s\n' "${l:0:150}"; done
+fi
 chk "$(grep -aq 'Finished installation\|Rebooting' "$I" && echo 1 || echo 0)" "install completed"
 # No login screen any more: greetd autologins into Hyprland. Check that the
 # session is wired up on the installed disk rather than looking for a greeter.
