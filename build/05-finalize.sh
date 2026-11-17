@@ -33,20 +33,22 @@ rm -f "$ROOT/.zerofile"
 
 ROOTFS_BYTES=$(du -sx "$ROOT" 2>/dev/null | awk '{print $1*1024}')
 
-# unmount everything
-sync
-umount -R "$ROOT" 2>/dev/null || umount -l "$ROOT" 2>/dev/null || true
-losetup -d "$(losetup -j "$IMG" | cut -d: -f1)" 2>/dev/null || true
-sync
-
 # Space breakdown, so shrinking the image is measurable from CI without
-# downloading the artifact: top-level directories of the root filesystem.
+# downloading the artifact. This must run while $ROOT is still mounted: after
+# umount the same command reports the empty mountpoint, not the rootfs.
 USAGE=""
 while read -r kb path; do
     [ -n "$path" ] || continue
     rel=${path#"$ROOT"}
     USAGE="$USAGE$(printf 'USAGE %6s  %s' "$(numfmt --to=iec "$((kb * 1024))")" "${rel:-/}")\n"
 done < <(du -kx --max-depth=1 "$ROOT" 2>/dev/null | sort -rn | head -9)
+
+
+# unmount everything
+sync
+umount -R "$ROOT" 2>/dev/null || umount -l "$ROOT" 2>/dev/null || true
+losetup -d "$(losetup -j "$IMG" | cut -d: -f1)" 2>/dev/null || true
+sync
 
 IMG_BYTES=$(stat -c %s "$IMG")
 REPORT="$(dirname "$IMG")/casper-build-report.txt"

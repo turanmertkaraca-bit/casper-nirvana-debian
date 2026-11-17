@@ -58,6 +58,12 @@ def send(line):
 # --- login ---
 r = wait_for(b"login:", login_timeout)
 if r is None:
+    # One retry: a slow boot can still be settling udev when the prompt would
+    # appear, and losing it costs every assertion that reads this log.
+    send("")
+    print("### no login prompt yet, retrying once")
+    r = wait_for(b"login:", 180)
+if r is None:
     print("FATAL: no login prompt — last serial output:")
     print(buf[-6000:].decode(errors="replace"))
     sys.exit(1)
