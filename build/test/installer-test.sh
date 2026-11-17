@@ -76,6 +76,7 @@ WAITED=0
 IDLE=0
 TIMEOUT=7200
 LAST_PROGRESS=""
+LAST_NOTICE=0
 while kill -0 "$QPID" 2>/dev/null; do
     sleep 30
     WAITED=$((WAITED+30))
@@ -112,9 +113,26 @@ while kill -0 "$QPID" 2>/dev/null; do
         tail -40 "$OUT/serial-install.log" 2>/dev/null || true
         exit 1
     fi
+    # Every 15 minutes, say where the install is. These land as annotations,
+    # which is the only part of this job a reader without a token can see: a
+    # run that ends in "did not finish" otherwise says nothing about whether
+    # it was downloading, unpacking, or running the fixup.
+    if [ $((WAITED - LAST_NOTICE)) -ge 900 ]; then
+        LAST_NOTICE=$WAITED
+        STAGE=$(cat "$OUT/installer-syslog.log" "$OUT/serial-install.log" 2>/dev/null | \
+            tr -d '\000' | grep -aiE 'in-target|debconf|Setting up|apt-get|Unpacking|casperos-fixup|Download' | \
+            tail -1 | cut -c1-140)
+        printf '::notice::install %ss: %s\n' "$WAITED" "${STAGE:-no recognizable stage yet}"
+    fi
     if [ "$WAITED" -ge "$TIMEOUT" ]; then
         echo "ERROR: installer did not finish in ${TIMEOUT}s"
         printf '::error::installer did not finish in %ss\n' "$TIMEOUT" >&2
+        # the last thing it did is the whole diagnosis: without it a timeout is
+        # indistinguishable from a stalled mirror, a hung dpkg or a slow disk
+        tail -3 "$OUT/serial-install.log" 2>/dev/null | tr -d '\000' | \
+            while IFS= read -r l; do [ -n "$l" ] && printf '::error::serial tail: %s\n' "${l:0:150}"; done
+        grep -aiE 'in-target|Setting up|E: |error|fail' "$OUT/installer-syslog.log" 2>/dev/null | \
+            tail -3 | while IFS= read -r l; do printf '::warning::syslog tail: %s\n' "${l:0:150}"; done
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
