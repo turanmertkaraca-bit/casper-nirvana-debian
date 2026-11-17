@@ -7,3 +7,7 @@
 *.log
 /build-work/
 /build-out/
+
+# python bytecode from the test helpers
+__pycache__/
+*.pyc
