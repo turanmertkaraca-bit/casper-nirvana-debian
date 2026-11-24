@@ -53,9 +53,13 @@ menuentry "CasperOS Auto-Flash" {
     initrd /boot/initrd.img
 }
 GRUB
-# a 200MB random image, compressed (as the real release embeds the .xz)
-dd if=/dev/urandom of="$OUT/dummy.img" bs=1M count=200 status=none
+# a 32MB random image, compressed (as the real release embeds the .xz).
+# 200MB was pointless: the test only asserts "payload found -> flashed ->
+# sha256 matches", and 32MB proves that identically while keeping the
+# incompressible urandom + its .xz out of the runner's disk budget.
+dd if=/dev/urandom of="$OUT/dummy.img" bs=1M count=32 status=none
 xz -1 -c "$OUT/dummy.img" > "$OUT/dummy.img.xz"
+rm -f "$OUT/dummy.img"
 ln "$OUT/dummy.img.xz" "$ISOTREE/casper-n220.img.xz"
 grub-mkrescue -o "$OUT/test.iso" "$ISOTREE" -- -volid CASPER_FLASH -joliet on >/dev/null 2>&1
 echo "test ISO: $OUT/test.iso ($(stat -c %s "$OUT/test.iso") bytes)"

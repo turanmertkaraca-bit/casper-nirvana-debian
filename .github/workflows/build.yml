@@ -54,8 +54,20 @@ jobs:
       - name: Compress and split for distribution
         run: |
           cd /tmp
+          # The smoke test's copy of the image is a throwaway and is worth ~3 GB
+          # of runner disk. Drop it before the compressor needs that space.
+          rm -rf /tmp/casper-test/test.img
           xz -6eT0 -c casper-n220.img > casper-n220.img.xz
+          # The raw image is not uploaded anywhere (only the .xz parts are),
+          # and "Run summary" has already read its size. It is 6 GB of runner
+          # disk that nothing below this line needs.
+          rm -f casper-n220.img
+          # 6 GB image of which ~2.3 GB is data compresses to ~1.1 GB, i.e.
+          # below the 1900M split size, so split produces one part identical to
+          # the .xz. Keep the stream form (the release flow and the flash-iso
+          # job both cat the parts) but do not keep a second copy of it.
           split -b 1900M -d -a 2 casper-n220.img.xz casper-n220.img.xz.
+          rm -f casper-n220.img.xz
           ls -la casper-n220.img.xz.*
           sha256sum casper-n220.img.xz.* > casper-n220.img.xz.sha256
           cat casper-n220.img.xz.sha256
@@ -145,8 +157,18 @@ jobs:
             -display none -vga std -no-reboot >/dev/null 2>&1 || true
           echo "--- stock netinst serial (first 30 lines):"
           head -30 /tmp/netinst-sanity.log 2>/dev/null || true
-          grep -aqE 'kernel|linux|Debian|install|debconf' /tmp/netinst-sanity.log \
-            && echo "STOCK NETINST BOOTS" || { echo "STOCK NETINST FAILED TO BOOT"; tail -20 /tmp/netinst-sanity.log 2>/dev/null || true; }
+          if grep -aqE 'kernel|linux|Debian|install|debconf' /tmp/netinst-sanity.log; then
+            echo "STOCK NETINST BOOTS"
+            printf '::notice::sanity: stock netinst boots in this QEMU setup\n'
+          else
+            echo "STOCK NETINST FAILED TO BOOT"
+            tail -20 /tmp/netinst-sanity.log 2>/dev/null || true
+            # An unreachable sanity baseline makes every later installer failure
+            # ambiguous, so say so loudly instead of exiting 0 either way.
+            printf '::error::sanity: stock netinst did NOT boot — the installer test result is not meaningful\n'
+          fi
+          # ~700 MB, used only by the 70s boot above
+          rm -f /tmp/netinst-check.iso
 
       - name: "Test the installer (QEMU IA32: full auto-install + verify)"
         run: |
@@ -257,8 +279,17 @@ jobs:
           # the chroot's proc/sys mounts can't be removed — ignore failures
           rm -rf /tmp/flash-root 2>/dev/null || true
           rm -rf /tmp/flash-test/isotree /tmp/flash-test/test.iso 2>/dev/null || true
+          # The embedded payload has already been copied into the ISO by
+          # grub-mkrescue and verified byte-for-byte against /tmp/payload.sha
+          # (a 64-byte file). 1.1 GB of duplicate is not needed any more.
+          rm -f /tmp/payload/casper-n220.img.xz
           xz -6eT0 -c casper-flash.iso > casper-flash.iso.xz
+          # The payload inside the ISO is already xz-compressed, so this second
+          # pass barely compresses and the split parts are a full duplicate of
+          # the .xz. Keep the parts (the release flow uploads exactly those),
+          # drop the redundant whole file.
           split -b 900M -d -a 2 casper-flash.iso.xz casper-flash.iso.xz.
+          rm -f casper-flash.iso.xz /tmp/casper-flash.iso
           ls -la casper-flash.iso.xz.*
           sha256sum casper-flash.iso.xz.* > casper-flash.iso.xz.sha256
           cat casper-flash.iso.xz.sha256

@@ -45,10 +45,15 @@ apt-get install -y -qq --no-install-recommends $(grep -v '^#' "$B/packages.list"
 log "applying configuration tree"
 cp -a "$B/configs/etc/." /etc/
 cp -a "$B/configs/usr/." /usr/
+# Upgraders: earlier versions installed the initramfs tuning into a directory
+# mkinitramfs never reads (initramfs.conf.d instead of conf.d), so their
+# initrds were built with gzip + MODULES=most. Drop the dead copy; the config
+# tree above has already placed the working one in conf.d.
+rm -rf /etc/initramfs-tools/initramfs.conf.d
 chmod 440 /etc/sudoers.d/90-casper-lvy
 chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
          /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
-         /usr/local/bin/casper-nvram 2>/dev/null || true
+         /usr/local/bin/casper-nvram /usr/local/bin/casper-session 2>/dev/null || true
 
 # ── 3. user lvy: drop the placeholder preseed password ─────────────────────
 log "fixing user lvy (null password)"
@@ -93,12 +98,28 @@ for f in \
 done
 dpkg -i *.deb
 rm -rf /root/k515
+# See 03-configure.sh: Ubuntu's mainline modules are raw .ko (428 MB tree);
+# compressing to .ko.xz is ~300 MB off the installed system and removes no
+# module. depmod afterwards so the index matches the new filenames.
+if find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print -quit 2>/dev/null | grep -q .; then
+    log "compressing 5.15 modules"
+    find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print0 \
+        | xargs -0 -r -n 64 -P "$(nproc 2>/dev/null || echo 2)" xz -9 --quiet 2>/dev/null || true
+    depmod -a 5.15.165-0515165-generic 2>/dev/null || true
+    # The package postinst built an initrd from the uncompressed modules;
+    # regenerate so it matches the compressed tree and the new depmod index.
+    update-initramfs -u -k 5.15.165-0515165-generic 2>/dev/null || true
+fi
 
 # ── 9. GRUB: regenerate with our params, then per-kernel tweaks ────────────
 log "grub"
 update-grub
-# append the legacy I2C params ONLY to the 5.15 entries
-bash /tmp/casperos/grub-casper-postprocess.sh /boot/grub/grub.cfg || true
+# append the legacy I2C params ONLY to the 5.15 entries.
+# $B, not a hardcoded /tmp/casperos: the payload is unpacked to /tmp/casperos
+# in the ISO flow but the script can equally be run from a git checkout, where
+# /tmp/casperos does not exist at all.
+bash "$B/grub-casper-postprocess.sh" /boot/grub/grub.cfg 2>/dev/null || \
+    bash /tmp/casperos/grub-casper-postprocess.sh /boot/grub/grub.cfg || true
 grub-script-check /boot/grub/grub.cfg || true
 
 # ── 10. fstab: tmpfs /tmp ──────────────────────────────────────────────────

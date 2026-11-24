@@ -106,7 +106,18 @@ echo "initrd rebuilt: $(ls lib/firmware/rtl8723bs 2>/dev/null | wc -l) rtl8723bs
 
 # ── 5. preseed the ISO's own BIOS/x64 boot entries (preseed lives in initrd) ─
 info "preseeding the ISO's own boot entries"
-PRESEED_ARGS="auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200"
+# priority=critical is not optional and `auto` does NOT imply it: `auto` is
+# only an alias for auto-install/enable, which merely defers the locale and
+# keyboard questions until after the preseed has been read. Debian's guide
+# (5.3.2) states the default is priority=high, and the installer's own "auto"
+# boot label is literally `auto=true priority=critical`. Shipping only `auto`
+# is what let a fully unattended install stop dead at the first high-priority
+# question (localechooser/translation/warn-light) and sit there for 7200s with
+# no keyboard to answer it.
+# DEBIAN_FRONTEND=text is the guide's recommendation for serial consoles; the
+# newt frontend redraws boxes with escape codes, which is precisely why the
+# captured serial log ended in `ESC[30m ESC[47m lqqqq...` instead of a sentence.
+PRESEED_ARGS="auto=true priority=critical preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 DEBIAN_FRONTEND=text"
 GRUB_CFG="$WORK/iso/boot/grub/grub.cfg"
 if [ -f "$GRUB_CFG" ]; then
     awk -v A="$PRESEED_ARGS" '
@@ -115,7 +126,7 @@ if [ -f "$GRUB_CFG" ]; then
 fi
 for f in "$WORK/iso/isolinux/txt.cfg" "$WORK/iso/isolinux/gtk.cfg"; do
     [ -f "$f" ] || continue
-    awk '{ if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " preseed/file=/preseed.cfg auto"; done=1; next } print }' \
+    awk '{ if (!done && $0 ~ /^[[:space:]]*append/ && $0 !~ /preseed\/file=/) { print $0 " auto=true priority=critical preseed/file=/preseed.cfg"; done=1; next } print }' \
         "$f" > "$f.new" && mv "$f.new" "$f"
 done
 
@@ -157,7 +168,7 @@ insmod normal
 
 menuentry "CasperOS installer - automatic, text mode (lowest RAM)" {
     search --no-floppy --file --set=root /install.amd/vmlinuz
-    linux /install.amd/vmlinuz auto preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 ---
+    linux /install.amd/vmlinuz auto=true priority=critical preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 DEBIAN_FRONTEND=text ---
     initrd /install.amd/initrd.gz
 }
 
@@ -267,5 +278,8 @@ MACHINE=$(bash "$SRC/build/tools/pe-machine.sh" /tmp/bootia32-check.efi 2>/dev/n
 [ "$MACHINE" = "014c" ] \
     || die "BOOTIA32.EFI has PE machine 0x$MACHINE, expected 0x014c (IA-32)"
 rm -f /tmp/bootia32-check.efi
+# ~1.6 GB of extracted ISO tree + netinst + initrd scratch, all consumed.
+# Nothing after this line reads $WORK, and the next run recreates it anyway.
+rm -rf "$WORK"
 ok "verified: EFI/BOOT/BOOTIA32.EFI present and PE32 (IA-32)"
 ok "installer ISO: $OUT ($(stat -c %s "$OUT") bytes)"

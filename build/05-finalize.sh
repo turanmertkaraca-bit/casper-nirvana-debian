@@ -26,6 +26,38 @@ rm -f "$ROOT/root/.bash_history" "$ROOT/home/lvy/.bash_history"
 rm -f "$ROOT/var/lib/systemd/random-seed"
 rm -rf "$ROOT/tmp/"* 2>/dev/null || true
 
+# ── initramfs gate: an initrd that cannot see the eMMC does not boot ──────
+# MODULES=dep resolves the *build host's* storage driver (it reads the running
+# /proc/mounts and /sys), so this image's initrds must contain the tablet's MMC
+# stack. Nothing else in the build would notice if they did not — the failure
+# is a kernel panic on the tablet, hours after a green build. lsinitramfs is
+# the only check that sees inside the image. Runs before the zero-fill so a
+# refused image does not cost the full write of the filesystem.
+info "verifying the initrds contain the tablet's storage stack"
+INITRD_FAIL=0
+for initrd in "$ROOT"/boot/initrd.img-*; do
+    [ -f "$initrd" ] || continue
+    name=$(basename "$initrd")
+    if ! listing=$(lsinitramfs "$initrd" 2>/dev/null); then
+        echo "WARN: could not read $name with lsinitramfs — skipping its check" >&2
+        continue
+    fi
+    missing=""
+    for mod in ext4 mmc_block sdhci sdhci_pci; do
+        # modules are stored compressed (zstd/gzip/xz), so match the basename
+        printf '%s\n' "$listing" | grep -qE "(^|/)${mod}\.ko(\.(xz|gz|zst))?$" \
+            || missing="$missing $mod"
+    done
+    if [ -n "$missing" ]; then
+        printf '::error::%s is missing modules:%s — the tablet would not mount root\n' "$name" "$missing" >&2
+        echo "FATAL: $name lacks:$missing" >&2
+        INITRD_FAIL=1
+    else
+        ok "$name contains ext4 + mmc_block + sdhci + sdhci_pci"
+    fi
+done
+[ "$INITRD_FAIL" = 0 ] || die "an initramfs cannot mount the eMMC root — refusing to ship this image"
+
 # zero free space so the image compresses well
 info "zeroing free space (for compression)"
 dd if=/dev/zero of="$ROOT/.zerofile" bs=1M status=none 2>/dev/null || true

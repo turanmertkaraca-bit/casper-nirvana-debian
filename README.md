@@ -31,11 +31,12 @@ Everything is baked in — nothing runs after first boot:
   browser, never the desktop), BFQ, schedutil, THP off, BBR + fq on the
   RTL8723BS Wi-Fi, masked background services, VA-API hardware decode (i965
   driver) for Firefox/mpv.
-- **Small boot footprint**: zstd initramfs cut down to the modules the root
-  device actually needs (`MODULES=dep` instead of Debian's `most`), which is
-  less to read off the eMMC and less RAM held while booting. Man pages, docs,
-  gtk-doc and lintian data are excluded at dpkg level, so they are never
-  written to the disk in the first place.
+- **Small boot footprint**: zstd initramfs, with the tablet's storage stack
+  (ext4 + `mmc_block`/`sdhci`) named explicitly so root always mounts, and
+  the build asserting with `lsinitramfs` that those modules are really in the
+  initrd — less to read off the eMMC and less RAM held while booting. Man
+  pages, docs, gtk-doc and lintian data are excluded at dpkg level, so they
+  are never written to the disk in the first place.
 - First-boot: root partition auto-resizes to fill the eMMC, and the firmware
   NVRAM boot entry is repaired once.
 

@@ -61,9 +61,16 @@ EOF
 # dpkg path-excludes (man/doc/locale) so even the first install is lean
 mkdir -p /etc/dpkg/dpkg.cfg.d
 cp -a "$B/configs/etc/dpkg/dpkg.cfg.d/10-casper" /etc/dpkg/dpkg.cfg.d/
-mkdir -p /etc/initramfs-tools/initramfs.conf.d
-cp -a "$B/configs/etc/initramfs-tools/initramfs.conf.d/99-casper.conf" /etc/initramfs-tools/initramfs.conf.d/
-chmod 644 /etc/initramfs-tools/initramfs.conf.d/99-casper.conf
+# The directory is conf.d, not initramfs.conf.d. mkinitramfs sources
+# $CONFDIR/initramfs.conf and then every file in $CONFDIR/conf.d/* — a file in
+# initramfs.conf.d is never read by anything (initramfs.conf(5): "Configuration
+# options can be broken out into configuration snippets and placed in
+# individual files in the /etc/initramfs-tools/conf.d directory"). It used to
+# live in a directory of that name, so the tuning was silently dead and every
+# initrd was built with the package defaults.
+mkdir -p /etc/initramfs-tools/conf.d
+cp -a "$B/configs/etc/initramfs-tools/conf.d/99-casper.conf" /etc/initramfs-tools/conf.d/
+chmod 644 /etc/initramfs-tools/conf.d/99-casper.conf
 
 # ── 3. main package install ────────────────────────────────────────────────
 log "apt update"
@@ -82,7 +89,7 @@ chmod 440 /etc/sudoers.d/90-casper-lvy
 # ensure our helper scripts are executable (dpkg/cp may have stripped modes)
 chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
          /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
-         /usr/local/bin/casper-nvram 2>/dev/null || true
+         /usr/local/bin/casper-nvram /usr/local/bin/casper-session 2>/dev/null || true
 
 # ── 5. firmware sanity ─────────────────────────────────────────────────────
 [ -f /lib/firmware/intel/fw_sst_0f28.bin ] \
@@ -157,6 +164,26 @@ for f in \
     [ -f "$f" ] || curl -fsSL -O "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/$f"
 done
 dpkg -i *.deb
+# Ubuntu's mainline modules ship as *raw* .ko (428 MB unpacked) while Debian's
+# own kernel ships the same kind of tree as .ko.xz (89 MB). Compressing them is
+# ~300 MB off the rootfs with no module removed: kmod decompresses .ko.xz in
+# userspace, and this image already depends on that (the flash ISO's busybox
+# path loads .ko.xz too). depmod has to re-run afterwards so the module index
+# points at the new filenames.
+log "compressing 5.15 modules (428 MB of .ko -> .ko.xz)"
+if find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print -quit 2>/dev/null | grep -q .; then
+    find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print0 \
+        | xargs -0 -r -n 64 -P "$(nproc 2>/dev/null || echo 2)" xz -9 --quiet || \
+        echo "WARN: some 5.15 modules failed to compress" >> "$REPORT"
+    depmod -a 5.15.165-0515165-generic 2>/dev/null || true
+    log "OK 5.15 modules compressed ($(du -sh /lib/modules/5.15.165-0515165-generic 2>/dev/null | cut -f1))"
+    # Rebuild after compressing: the initrd built by the package postinst holds
+    # the *uncompressed* .ko copies, and depmod's index just changed under it.
+    # Done here rather than relied on from the postinst, because a 5.15 Ubuntu
+    # kernel on a Debian system is not the combination that postinst expects.
+    update-initramfs -u -k 5.15.165-0515165-generic 2>/dev/null || \
+        echo "WARN: could not regenerate the 5.15 initramfs" >> "$REPORT"
+fi
 if find /lib/modules/5.15.165-0515165-generic -name 'r8723bs*' 2>/dev/null | grep -q .; then
     log "OK r8723bs driver present in 5.15 kernel"
 else

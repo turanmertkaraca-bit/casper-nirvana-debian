@@ -1,0 +1,47 @@
+#!/bin/sh
+# CasperOS — the greetd session command.
+#
+# Why this is a script and not a one-liner in config.toml:
+# greetd runs `command` through sh with a literal `exec ` prefix prepended
+# (`/bin/sh -c 'exec <your command>'`). So a conditional one-liner such as
+#
+#     command = "command -v Hyprland >/dev/null 2>&1 && exec Hyprland || exec /bin/bash -l"
+#
+# becomes `exec command -v Hyprland ...` — and `command` is a shell builtin,
+# not an executable, so exec fails with 127 ("exec: command: not found")
+# before the && or || can ever run. That is why greetd.service failed to start
+# on every boot: the guard meant to provide a fallback was itself the failure.
+#
+# Here the logic lives inside the script, so greetd's prepended `exec` applies
+# to this file, and the conditional runs in a real shell.
+set -u
+
+# Hyprland + Caelestia is the ONLY session on this image and it has never been
+# verified on the tablet. greetd drops to a shell on VT1 when the compositor
+# cannot start, which would otherwise mean "no GUI and no explanation". Two
+# failure modes are handled here:
+#   1. the compositor is not installed at all (the best-effort layer failed to
+#      build) — check with command -v before trying;
+#   2. the compositor is installed but exits immediately (no DRM/GBM device,
+#      a GPU that cannot allocate, a QML error that kills it, ...) — the exit
+#      status and the duration tell us which, and we fall back to a shell
+#      instead of letting greetd spin on a session that will never work.
+if command -v Hyprland >/dev/null 2>&1; then
+    started=$(date +%s)
+    Hyprland
+    rc=$?
+    ran=$(( $(date +%s) - started ))
+    echo "casper-session: Hyprland exited $rc after ${ran}s" >&2
+    # A clean exit means the user logged out / closed the session, which is a
+    # legitimate way to end it. Anything else is a failure worth falling back
+    # from rather than re-execing the same broken session.
+    [ "$rc" -eq 0 ] && exit 0
+else
+    echo "casper-session: Hyprland not installed — falling back to a shell on VT1" >&2
+fi
+
+echo "casper-session: starting a login shell on VT1 (Ctrl+Alt+F2 also gives one)" >&2
+if [ -x /bin/bash ]; then
+    exec /bin/bash -l
+fi
+exec /bin/sh -l

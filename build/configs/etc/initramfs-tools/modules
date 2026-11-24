@@ -1,0 +1,24 @@
+# CasperOS — the storage stack the tablet actually needs in its initramfs.
+#
+# These are read by mkinitramfs BEFORE the MODULES policy is applied, so they
+# are included under `most`, `list` or `dep` alike. Debian's `most` already
+# pulls in all of drivers/mmc, so on today's trixie this list is redundancy —
+# and it is deliberate redundancy, because it is the difference between "the
+# initrd contains mmc_block" and a kernel panic at local_mount_root, and
+# 05-finalize.sh checks the built initrd for exactly these names.
+#
+# Bay Trail's eMMC is an SDHCI controller (PCI id BYT_EMMC / BYT_EMMC2), and on
+# some N220/N240 firmware it is enumerated over ACPI instead; iosf_mbi is
+# called by both paths on Bay Trail. ext4's crc deps are listed because the
+# ramp-up to "root mounts" is the one thing that must never depend on a guess.
+ext4
+jbd2
+crc16
+crc32c
+mmc_core
+mmc_block
+sdhci
+sdhci_pci
+sdhci_acpi
+cqhci
+iosf_mbi

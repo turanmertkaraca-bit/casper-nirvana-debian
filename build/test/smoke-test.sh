@@ -186,6 +186,14 @@ systemctl is-enabled greetd.service >/dev/null 2>&1 && echo GREETD_ENABLED
 echo "SESSION_ACTIVE=$(systemctl is-active greetd.service 2>/dev/null)"
 echo "SESSION_SUB=$(systemctl show -p SubState --value greetd.service 2>/dev/null)"
 echo "SESSION_FAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -2 | cut -d' ' -f1)"
+# greetd prepends a literal `exec ` to default_session command, so that value
+# must name an executable file, never a shell expression. An inline
+# "command -v Hyprland && exec Hyprland || exec bash" became
+# `exec command ...` -> 127 and greetd.service failed on every boot. Assert
+# both halves: the config points at the script, and the script is runnable.
+echo "SESSION_CMD=$(grep -E '^command' /etc/greetd/config.toml 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\" ')"
+[ -x /usr/local/bin/casper-session ] && echo SESSION_SCRIPT_OK || echo SESSION_SCRIPT_MISSING
+grep -q 'casper-session' /etc/greetd/config.toml 2>/dev/null && echo SESSION_WIRED || echo SESSION_NOT_WIRED
 journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -10
 command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
 command -v qs >/dev/null 2>&1 && echo QS_PRESENT
@@ -339,6 +347,11 @@ for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-c
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
 done
 chks "$(grepq 'GREETD_ENABLED' "$s1")" "greetd enabled as the session launcher"
+# The session command has to be a runnable file, because greetd execs it with
+# a literal `exec ` prefix. Checking the config text as well as the file stops
+# the "inline conditional" bug from coming back unnoticed.
+chks "$(grepq 'SESSION_SCRIPT_OK' "$s1")" "greetd session script is executable"
+chks "$(grepq 'SESSION_WIRED' "$s1")" "greetd config points at the session script"
 chks "$(grepq 'HYPRLAND_PRESENT' "$s1")" "Hyprland installed"
 chks "$(grepq 'HYPR_CONF_OK' "$s1")" "system Hyprland config present"
 chks "$(grepq 'QS_PRESENT' "$s1")" "quickshell (qs) installed"
