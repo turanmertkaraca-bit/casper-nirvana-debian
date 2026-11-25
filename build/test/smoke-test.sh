@@ -211,6 +211,12 @@ find /boot/efi -name '*.efi' | head -5
 file /boot/efi/EFI/BOOT/BOOTIA32.EFI 2>/dev/null || true
 echo ---GOV_JOURNAL
 journalctl -q -u casper-cpu-governor.service -b --no-pager --no-hostname | tail -5
+# casper-growroot runs `parted -s ... resizepart` on first boot to fill the
+# eMMC. parted was missing from the package list, so the documented resize
+# failed silently: the script logged "parted failed" and gave up. SHORT lines.
+command -v parted >/dev/null 2>&1 && echo PARTED_PRESENT || echo PARTED_MISSING
+command -v resize2fs >/dev/null 2>&1 && echo RESIZE2FS_PRESENT || echo RESIZE2FS_MISSING
+echo "SVC_GROWROOT=$(systemctl is-enabled casper-growroot.service 2>/dev/null)"
 echo ---JOURNAL_ERR
 journalctl -q --no-pager -p err -b --no-hostname | tail -8
 echo ---ANALYZE
@@ -364,6 +370,8 @@ chks "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
 # device, so the framebuffer legitimately stays black - on the tablet it is
 # the i915 driver instead. The screenshot is reported, not asserted.
 chks "$(grepq 'SESSION_ACTIVE=active' "$s1")" "greetd session launcher active"
+chks "$(grepq 'PARTED_PRESENT' "$s1")" "parted present (first-boot root resize)"
+chks "$(grepq 'RESIZE2FS_PRESENT' "$s1")" "resize2fs present (first-boot root resize)"
 echo "  (screenshot: $(ppm_visible "$OUT/session-boot1.ppm" >/dev/null 2>&1 && echo content || echo black) — informational)"
 
 echo ""

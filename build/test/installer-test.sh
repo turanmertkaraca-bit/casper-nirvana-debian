@@ -18,10 +18,11 @@ command -v qemu-system-x86_64 >/dev/null || { echo "qemu missing" >&2; exit 1; }
 rm -rf "$OUT" && mkdir -p "$OUT"
 
 # ── blank target disk (the internal eMMC stand-in) ─────────────────────────
-# 4G, not 8G: the preseeded install is a single 'atomic' root partition with
-# no swap and the package set is ~2.5 GB, so 4G is ample — and this file is
-# one of the biggest things a run leaves behind (~3 GB actually written).
-truncate -s 4G "$OUT/target.disk"
+# 8G: small_disk's amd64 minimum is ~3.3 GB but it also wants swap, and the
+# package set is ~2.5 GB. This is a SPARSE file — verified: a 8 GiB truncate
+# occupies ~0 blocks and only the bytes actually written are allocated — so the
+# nominal size costs no disk. Only ~3 GB is ever really used.
+truncate -s 8G "$OUT/target.disk"
 
 # ── extract the installer kernel + initrd from the ISO (direct boot) ───────
 LOOP=$(losetup -f)
@@ -41,7 +42,7 @@ losetup -d "$LOOP" 2>/dev/null || true
 rmdir "$OUT/iso" 2>/dev/null || true
 echo "kernel: $OUT/vmlinuz, initrd: $OUT/initrd.gz"
 echo "--- initrd contents check:"
-gzip -dc "$OUT/initrd.gz" 2>/dev/null | cpio -t 2>/dev/null | grep -E 'preseed\.cfg|^casperos$|lib/firmware/rtl8723bs' | head -8
+gzip -dc "$OUT/initrd.gz" 2>/dev/null | cpio -t 2>/dev/null | grep -E 'preseed\.cfg|^casperos$|firmware/rtlwifi/rtl8723bs_nic|firmware/rtl_bt/rtl8723bs' | head -8
 echo "(preseed.cfg present in the booted initrd: $?)"
 
 # ── phase 1: run the installer (preseeded, automatic; BIOS machine) ─────────
@@ -197,12 +198,36 @@ echo "--- installer serial tail (last 15 lines):"
 tail -15 "$OUT/serial-install.log" 2>/dev/null || true
 lsblk -o NAME,SIZE,FSTYPE "$OUT/target.disk" 2>/dev/null || true
 
-# ── phase 2: boot the installed system and verify ──────────────────────────
+# ── mount the installed root ───────────────────────────────────────────────
 echo "=== phase 2: booting the installed system ==="
 LOOP=$(losetup -f)
 losetup -P "$LOOP" "$OUT/target.disk"
 mkdir -p "$OUT/mnt"
-mount "${LOOP}p2" "$OUT/mnt" 2>/dev/null || mount "${LOOP}p1" "$OUT/mnt" 2>/dev/null || true
+# Find root by CONTENT, not by partition number: the preseeded recipe decides
+# the layout (small_disk/atomic put / behind a /boot, with a biosgrub
+# partition or an ESP in front). Mounting "${LOOP}p2" blindly mounted /boot
+# and made every assertion below read an empty tree.
+mount_installed_root() {
+    local part
+    mount "${LOOP}p2" "$OUT/mnt" 2>/dev/null || mount "${LOOP}p1" "$OUT/mnt" 2>/dev/null || true
+    if [ -f "$OUT/mnt/etc/hostname" ] && [ -d "$OUT/mnt/usr" ]; then
+        return 0
+    fi
+    umount "$OUT/mnt" 2>/dev/null || true
+    for part in "$LOOP"p*; do
+        [ -b "$part" ] || continue
+        mount "$part" "$OUT/mnt" 2>/dev/null || continue
+        if [ -f "$OUT/mnt/etc/hostname" ] && [ -d "$OUT/mnt/usr" ]; then
+            echo "installed root is $part"
+            return 0
+        fi
+        umount "$OUT/mnt" 2>/dev/null || true
+    done
+    echo "WARN: no partition of $OUT/target.disk looks like the installed root" >&2
+    return 1
+}
+
+mount_installed_root || true
 if [ -f "$OUT/mnt/boot/grub/grub.cfg" ]; then
     awk '
         { if (!done && $0 ~ /linux[ \t]+\/boot\/vmlinuz-/ && $0 !~ /console=ttyS0/) { print $0 " console=ttyS0,115200"; done=1; next } print }
@@ -290,29 +315,43 @@ chk() {
 V="$OUT/verify.log"
 B="$OUT/serial-boot.log"
 I="$OUT/serial-install.log"
+S="$OUT/installer-syslog.log"
 
 # The installed disk has to be mounted BEFORE any verdict reads from it.
 # `chk "$([ -e "$M/..." ])"` used to run with M still unset, and set -u turns
 # that into "M: unbound variable" — the check silently evaluated to false and
 # the whole script kept going, which is why "greetd enabled at install time"
 # could fail without any explanation.
-LOOP=$(losetup -f)
-losetup -P "$LOOP" "$OUT/target.disk"
-mkdir -p "$OUT/mnt"
-mount "${LOOP}p2" "$OUT/mnt" 2>/dev/null || mount "${LOOP}p1" "$OUT/mnt" 2>/dev/null || true
+mount_installed_root || true
 M="$OUT/mnt"
 
 chk "$(grep -q '### LOGIN PROMPT SHOWN' "$V" && echo 1 || echo 0)" "installed system boots to a login prompt"
-chk "$(grep -aq 'casperos-fixup: fixup complete' "$I" && echo 1 || echo 0)" "CasperOS fixup ran at install time"
-if ! grep -aq 'casperos-fixup: fixup complete' "$I" 2>/dev/null; then
-    # the fixup is the part most likely to break; show what it said
-    grep -aiE 'casperos-fixup|in-target|error|E: ' "$I" 2>/dev/null | tail -4 | \
-        while IFS= read -r l; do printf '::warning::serial-install: %s\n' "${l:0:150}"; done
+# d-i's `in-target` runs the fixup under log-output, which sends BOTH stdout
+# and stderr to syslog — the fixup's own lines never reach ttyS0. So look for
+# its sentinel file on the installed disk (authoritative, immune to log
+# routing) and fall back to the syslog, never to the serial log.
+FIXUP_OK=0
+[ -f "$M/var/log/casperos-fixup.ok" ] && FIXUP_OK=1
+[ "$FIXUP_OK" = 0 ] && grep -aq 'casperos-fixup: fixup complete' "$S" 2>/dev/null && FIXUP_OK=1
+chk "$FIXUP_OK" "CasperOS fixup ran to completion at install time"
+if [ "$FIXUP_OK" = 0 ]; then
+    # the fixup is the part most likely to break; show what it said, from the
+    # log that actually carries its output
+    grep -aiE 'casperos-fixup|in-target|error|E: ' "$S" "$I" 2>/dev/null | tail -6 | \
+        while IFS= read -r l; do printf '::warning::fixup: %s\n' "${l:0:150}"; done
 fi
-chk "$(grep -aq 'Finished installation\|Rebooting' "$I" && echo 1 || echo 0)" "install completed"
-# No login screen any more: greetd autologins into Hyprland. Check that the
-# session is wired up on the installed disk rather than looking for a greeter.
-chk "$([ -e "$M/etc/systemd/system/graphical.target.wants/greetd.service" ] && echo 1 || echo 0)" "greetd enabled at install time"
+# "Rebooting into your new system" is a debconf template description, only
+# rendered by the frontend, so it is not a reliable marker under
+# DEBIAN_FRONTEND=text. The install finished iff d-i got as far as the fixup
+# or the reboot; use that, and the boot prompt in phase 2 is the real proof.
+chk "$( { grep -aqE 'Finished installation|Rebooting|fixup complete' "$I" "$S" 2>/dev/null \
+        || [ "$FIXUP_OK" = 1 ]; } && echo 1 || echo 0)" "install completed"
+# No login screen any more: greetd autologins into Hyprland. greetd's unit has
+# no WantedBy= — only Alias=display-manager.service — so `systemctl enable`
+# creates /etc/systemd/system/display-manager.service, never a
+# graphical.target.wants/greetd.service symlink. Assert the alias, which is
+# what actually happens.
+chk "$([ -e "$M/etc/systemd/system/display-manager.service" ] && echo 1 || echo 0)" "greetd enabled as display-manager"
 
 chk "$([ -f "$M/etc/libinput/local-overrides.quirks" ] && echo 1 || echo 0)" "libinput quirk present"
 chk "$(grep -q 'intel_idle.max_cstate=1' "$M/etc/default/grub.d/99-casper.cfg" 2>/dev/null && echo 1 || echo 0)" "GRUB kernel params baked"
@@ -326,12 +365,16 @@ chk "$(ls "$M"/boot/vmlinuz-5.15* >/dev/null 2>&1 && echo 1 || echo 0)" "5.15 fa
 # Hyprland.
 chk "$(grep -q 'casper-session' "$M/etc/greetd/config.toml" 2>/dev/null && echo 1 || echo 0)" "greetd points at the session script"
 chk "$([ -x "$M/usr/local/bin/casper-session" ] && echo 1 || echo 0)" "session script is executable"
-chk "$(grep -q 'exec Hyprland' "$M/usr/local/bin/casper-session" 2>/dev/null && echo 1 || echo 0)" "session script execs Hyprland"
+chk "$(grep -qE '^[[:space:]]*(exec[[:space:]]+)?Hyprland[[:space:]]*$' "$M/usr/local/bin/casper-session" 2>/dev/null && echo 1 || echo 0)" "session script runs Hyprland"
 chk "$([ -f "$M/etc/xdg/hypr/hyprland.conf" ] && echo 1 || echo 0)" "Hyprland session config installed"
 chk "$(grep -q 'tmpfs /tmp' "$M/etc/fstab" 2>/dev/null && echo 1 || echo 0)" "tmpfs /tmp in fstab"
 chk "$(grep -q 'zram' "$M/etc/default/zramswap" 2>/dev/null && echo 1 || echo 0)" "zram config present"
 chk "$(grep -q 'lvy ALL=(ALL) NOPASSWD' "$M/etc/sudoers.d/90-casper-lvy" 2>/dev/null && echo 1 || echo 0)" "lvy sudo setup"
-chk "$([ -f "$M/etc/systemd/system/casper-touchscreen-watchdog.service" ] && echo 1 || echo 0)" "watchdog unit present"
+# The casper-* units ship to /usr/lib/systemd/system; `systemctl enable` only
+# adds a .wants/ symlink under /etc, so checking /etc/systemd/system/<unit> was
+# false on every correct install.
+chk "$([ -f "$M/usr/lib/systemd/system/casper-touchscreen-watchdog.service" ] && echo 1 || echo 0)" "watchdog unit present"
+chk "$([ -e "$M/etc/systemd/system/multi-user.target.wants/casper-touchscreen-watchdog.service" ] && echo 1 || echo 0)" "watchdog unit enabled"
 chk "$([ -f "$M/usr/share/plymouth/themes/casper-splash/casper-splash.plymouth" ] && echo 1 || echo 0)" "plymouth theme present"
 umount "$OUT/mnt" 2>/dev/null || true
 losetup -d "$LOOP" 2>/dev/null || true

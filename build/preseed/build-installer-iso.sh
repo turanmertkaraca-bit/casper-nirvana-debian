@@ -80,10 +80,30 @@ if [ -z "$FWREL" ]; then
 fi
 if curl -fsSL --retry 3 -o "$FW/firmware-realtek.deb" "http://deb.debian.org/debian/$FWREL"; then
     dpkg-deb -x "$FW/firmware-realtek.deb" "$FW/x"
-    mkdir -p "$WORK/initrd-overlay/lib/firmware/rtl8723bs" "$WORK/initrd-overlay/lib/firmware/rtl_bt"
-    cp -a "$FW/x/lib/firmware/rtl8723bs/." "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null || true
-    cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_*" "$WORK/initrd-overlay/lib/firmware/rtl_bt/" 2>/dev/null || true
-    echo "firmware staged: $(ls "$WORK/initrd-overlay/lib/firmware/rtl8723bs/" 2>/dev/null | wc -l) rtl8723bs files"
+    # The Wi-Fi firmware for this chip is rtlwifi/rtl8723bs_nic.bin — that is
+    # the literal name the driver's request_firmware() uses
+    # (drivers/staging/rtl8723bs/hal/rtl8723b_hal_init.c). There is NO
+    # lib/firmware/rtl8723bs/ directory in the package at all, so the previous
+    # `cp -a .../rtl8723bs/.` copied nothing, its || true hid the failure, and
+    # the "0 rtl8723bs files" line went unread. On a tablet with no ethernet
+    # that means netcfg finds no interface and raises its error dialog.
+    mkdir -p "$WORK/initrd-overlay/lib/firmware/rtlwifi" \
+             "$WORK/initrd-overlay/lib/firmware/rtl_bt"
+    cp -a "$FW/x/lib/firmware/rtlwifi/rtl8723bs_nic.bin" \
+          "$WORK/initrd-overlay/lib/firmware/rtlwifi/" 2>/dev/null || true
+    # Bluetooth is UART-attached on this device; btrtl wants the "bs" names.
+    cp -a "$FW/x/lib/firmware/rtl_bt/rtl8723bs_config.bin" \
+          "$FW/x/lib/firmware/rtl_bt/rtl8723bs_fw.bin" \
+          "$WORK/initrd-overlay/lib/firmware/rtl_bt/" 2>/dev/null || true
+
+    # The Wi-Fi blob is not a nicety any more: it is the only way this tablet
+    # can reach a mirror during the install. Assert it rather than echo a count
+    # nobody reads.
+    if [ -f "$WORK/initrd-overlay/lib/firmware/rtlwifi/rtl8723bs_nic.bin" ]; then
+        echo "firmware staged: rtlwifi/rtl8723bs_nic.bin ($(stat -c %s "$WORK/initrd-overlay/lib/firmware/rtlwifi/rtl8723bs_nic.bin") bytes)"
+    else
+        echo "ERROR: rtlwifi/rtl8723bs_nic.bin not found in $FWREL — installer Wi-Fi will not work on the tablet" >&2
+    fi
 else
     echo "WARNING: firmware-realtek download failed — installer Wi-Fi may not work on the tablet"
 fi
@@ -94,15 +114,30 @@ cp -a "$WORK/payload/casperos" "$WORK/initrd-overlay/casperos"
 INITRD_GZ=$(ls "$WORK/iso/install.amd/initrd.gz")
 mkdir -p "$WORK/ird"
 cd "$WORK/ird"
-gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null || true
+# NOT `|| true`: swallowing an extraction failure here means the repack below
+# writes a partial initrd and the ISO ships unbootable, with a green build.
+if ! gzip -dc "$INITRD_GZ" | cpio -id --quiet 2>/dev/null; then
+    die "could not extract $INITRD_GZ"
+fi
+[ -e ./init ] || die "extracted initrd has no /init — refusing to repack it"
 echo "initrd extracted: $(find . -maxdepth 2 -type d | head -5 | tr '\n' ' ')"
 # merge the overlay INTO the extracted initrd — never replace anything
 mkdir -p lib/firmware
-cp -a "$WORK/initrd-overlay/lib/firmware/." lib/firmware/
+# The overlay's firmware tree only exists if the download succeeded; cp -a of a
+# missing source fails and set -e would abort the ISO build for a "nicety".
+[ -d "$WORK/initrd-overlay/lib/firmware" ] && \
+    cp -a "$WORK/initrd-overlay/lib/firmware/." lib/firmware/
 cp -a "$WORK/initrd-overlay/preseed.cfg" ./preseed.cfg
 cp -a "$WORK/initrd-overlay/casperos" ./casperos
 find . | cpio -o -H newc --quiet 2>/dev/null | gzip -9 > "$INITRD_GZ"
-echo "initrd rebuilt: $(ls lib/firmware/rtl8723bs 2>/dev/null | wc -l) rtl8723bs files, preseed.cfg present"
+# Verify the repack instead of printing a directory count nobody reads: the
+# preseed and the Wi-Fi blob are the two things the install depends on.
+for want in preseed.cfg casperos/casperos-fixup.sh \
+            lib/firmware/rtlwifi/rtl8723bs_nic.bin; do
+    [ -e "$WORK/ird/$want" ] || echo "WARN: $want missing from the rebuilt initrd" >&2
+done
+echo "initrd rebuilt: preseed.cfg=$( [ -e ./preseed.cfg ] && echo yes || echo NO ) \
+wifi-fw=$( [ -e lib/firmware/rtlwifi/rtl8723bs_nic.bin ] && echo yes || echo NO )"
 
 # ── 5. preseed the ISO's own BIOS/x64 boot entries (preseed lives in initrd) ─
 info "preseeding the ISO's own boot entries"

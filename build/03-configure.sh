@@ -95,9 +95,16 @@ chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
 [ -f /lib/firmware/intel/fw_sst_0f28.bin ] \
     && log "OK SST firmware present" \
     || echo "WARN: fw_sst_0f28.bin missing — audio card will not probe" >> "$REPORT"
-ls /lib/firmware/rtl_bt >/dev/null 2>&1 \
-    && log "OK rtl bluetooth firmware present" \
-    || echo "WARN: rtl_bt firmware missing" >> "$REPORT"
+# The Wi-Fi blob is the one this tablet cannot work without, and it lives at
+# rtlwifi/rtl8723bs_nic.bin (the name the driver's request_firmware() uses).
+# Checking only that the rtl_bt directory exists passed even when no Wi-Fi
+# firmware was present at all.
+[ -f /lib/firmware/rtlwifi/rtl8723bs_nic.bin ] \
+    && log "OK rtl8723bs wifi firmware present" \
+    || echo "WARN: rtlwifi/rtl8723bs_nic.bin missing — Wi-Fi will not come up" >> "$REPORT"
+[ -f /lib/firmware/rtl_bt/rtl8723bs_fw.bin ] \
+    && log "OK rtl8723bs bluetooth firmware present" \
+    || echo "WARN: rtl_bt/rtl8723bs_fw.bin missing — Bluetooth will not come up" >> "$REPORT"
 
 # ── 5b. libinput quirk validation — a rejected file silently disables ALL
 #       quirks, so the build FAILS instead of shipping a dead fix. ─────────
@@ -163,7 +170,15 @@ for f in \
     linux-modules-5.15.165-0515165-generic_5.15.165-0515165.202408190457_amd64.deb; do
     [ -f "$f" ] || curl -fsSL -O "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/$f"
 done
-dpkg -i *.deb
+if ! compgen -G '*.deb' >/dev/null; then
+    echo "FATAL: 5.15 kernel packages not downloaded" >> "$REPORT"
+    exit 1
+fi
+dpkg --force-confdef --force-confold -i *.deb
+# Leave the download directory before anything else: `cd /` keeps a later
+# find(1) from failing with "Failed to save initial working directory" if this
+# directory is ever removed while we are still standing in it.
+cd /
 # Ubuntu's mainline modules ship as *raw* .ko (428 MB unpacked) while Debian's
 # own kernel ships the same kind of tree as .ko.xz (89 MB). Compressing them is
 # ~300 MB off the rootfs with no module removed: kmod decompresses .ko.xz in
@@ -171,7 +186,7 @@ dpkg -i *.deb
 # path loads .ko.xz too). depmod has to re-run afterwards so the module index
 # points at the new filenames.
 log "compressing 5.15 modules (428 MB of .ko -> .ko.xz)"
-if find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print -quit 2>/dev/null | grep -q .; then
+if find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print -quit | grep -q .; then
     find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print0 \
         | xargs -0 -r -n 64 -P "$(nproc 2>/dev/null || echo 2)" xz -9 --quiet || \
         echo "WARN: some 5.15 modules failed to compress" >> "$REPORT"

@@ -49,6 +49,12 @@ console-setup
 keyboard-configuration
 efibootmgr
 systemd-timesyncd
+# parted is not just a build-time tool: /usr/local/bin/casper-growroot calls
+# `parted -s "$disk" resizepart` on first boot to grow the root partition to
+# fill the eMMC. It was missing from this list, so the documented
+# "root partition auto-resizes" step failed silently on the device (the script
+# logs "parted failed" and gives up).
+parted
 
 # ── kernel (Debian 6.12 default) ───────────────────────────────────────────
 linux-image-amd64
