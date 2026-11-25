@@ -231,21 +231,23 @@ echo "=== phase 2: booting the installed system ==="
 LOOP=$(losetup -f)
 losetup -P "$LOOP" "$OUT/target.disk"
 mkdir -p "$OUT/mnt"
-# Find root by CONTENT, not by partition number: the preseeded recipe decides
-# the layout (small_disk/atomic put / behind a /boot, with a biosgrub
-# partition or an ESP in front). Mounting "${LOOP}p2" blindly mounted /boot
-# and made every assertion below read an empty tree.
+# Find root by CONTENT, not by partition number. On this BIOS/q35 VM with no
+# EFI firmware, trixie's amd64 small_disk recipe decodes to:
+#   sda1 = ext4 /            (the whole disk)
+#   sda2 = extended container
+#   sda5 = linux-swap
+# — no /boot and no biosgrub (its stanza is $iflabel{ gpt }, and the table here
+# is msdos), and the /boot stanza is $defaultignore so it is dropped even
+# before sizing. So root is p1, NOT p2; the old code mounted p2 first and only
+# worked by falling through. The probe also requires /etc/debian_version and
+# /usr/bin, because /usr alone could match a large /boot.
 mount_installed_root() {
     local part
-    mount "${LOOP}p2" "$OUT/mnt" 2>/dev/null || mount "${LOOP}p1" "$OUT/mnt" 2>/dev/null || true
-    if [ -f "$OUT/mnt/etc/hostname" ] && [ -d "$OUT/mnt/usr" ]; then
-        return 0
-    fi
-    umount "$OUT/mnt" 2>/dev/null || true
     for part in "$LOOP"p*; do
         [ -b "$part" ] || continue
-        mount "$part" "$OUT/mnt" 2>/dev/null || continue
-        if [ -f "$OUT/mnt/etc/hostname" ] && [ -d "$OUT/mnt/usr" ]; then
+        mount -o ro "$part" "$OUT/mnt" 2>/dev/null || continue
+        if [ -f "$OUT/mnt/etc/hostname" ] && [ -f "$OUT/mnt/etc/debian_version" ] \
+            && [ -d "$OUT/mnt/usr/bin" ]; then
             echo "installed root is $part"
             return 0
         fi

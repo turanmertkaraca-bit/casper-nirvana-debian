@@ -85,6 +85,10 @@ gnome-settings-daemon
 gnome-control-center
 gdm3
 polkitd
+# Trixie split pkexec out of policykit-1, and gnome-settings-daemon only
+# Recommends it. gsd-power calls `pkexec gsd-backlight-helper`, so without
+# pkexec the brightness keys silently do nothing.
+pkexec
 dconf-cli
 dconf-gsettings-backend
 gsettings-desktop-schemas
@@ -95,8 +99,29 @@ udisks2
 gnome-console
 gnome-text-editor
 gnome-keyring
+# PAM hook that unlocks the login keyring at login. Without it, every app that
+# stores a secret prompts for the keyring password separately — immediately
+# obvious with firefox-esr and NetworkManager. Only a Recommends, so state it.
+libpam-gnome-keyring
+# The assistive-technology bus. Owns org.a11y.Bus; GNOME Shell's a11y paths and
+# the login screen's Universal Access menu need it. Only a Recommends of gdm3.
+at-spi2-core
+# gnome-backgrounds ships the wallpaper that gsettings-desktop-schemas points
+# at; without it GNOME draws a flat fallback colour.
+gnome-backgrounds
+# ── network ────────────────────────────────────────────────────────────────
 network-manager
 network-manager-gnome
+# wpasupplicant is only a Recommends of network-manager, and this build installs
+# with --no-install-recommends. Without it NM can SEE every access point and
+# cannot associate with ANY WPA/WPA2/WPA3 network. On a tablet whose only NIC is
+# the RTL8723BS and which has no Ethernet port, that is "no network at all".
+wpasupplicant
+# NM Recommends these; both are small and both matter on this hardware:
+# wireless-regdb sets the regulatory domain (5 GHz legality, tx power), rfkill
+# is how you diagnose a soft-blocked RTL8723BS.
+wireless-regdb
+rfkill
 iio-sensor-proxy
 xdg-desktop-portal
 xdg-desktop-portal-gnome

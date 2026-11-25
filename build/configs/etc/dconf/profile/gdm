@@ -1,0 +1,17 @@
+# CasperOS — the dconf profile the GDM GREETER reads.
+#
+# Why this file exists: Debian's gdm3 runs the greeter with
+# DCONF_PROFILE=Debian-gdm, and /usr/share/dconf/profile/gdm (which that
+# ultimately resolves to) contains only `user-db:user` and
+# `file-db:/var/lib/gdm3/greeter-dconf-defaults`. There is NO `system-db:gdm`
+# line, so /etc/dconf/db/gdm.d/ — where the login-screen settings used to live —
+# is never read by anything. A file there compiles fine and does nothing, which
+# is exactly why it looked correct.
+#
+# /etc/dconf/profile/ takes precedence over /usr/share/dconf/profile/, so this
+# is the supported way to add the database back. The file-db line is kept
+# because /usr/share/gdm/generate-config compiles
+# /etc/gdm3/greeter.dconf-defaults into it.
+user-db:user
+system-db:gdm
+file-db:/var/lib/gdm3/greeter-dconf-defaults

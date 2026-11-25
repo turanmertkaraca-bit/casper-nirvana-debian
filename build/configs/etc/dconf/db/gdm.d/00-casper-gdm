@@ -1,5 +1,10 @@
-# CasperOS — GDM (login screen) defaults: on-screen keyboard + touch scale
-
+# CasperOS — GDM (login screen) defaults: on-screen keyboard + touch scale.
+#
+# This only takes effect together with build/configs/etc/dconf/profile/gdm,
+# which adds the `system-db:gdm` line Debian's own profile omits. Without that
+# line this file is compiled and never read, and the login screen gets neither
+# the on-screen keyboard nor the larger text — on a tablet whose only input is
+# touch, that means you cannot type your password at the greeter at all.
 [org/gnome/desktop/a11y/applications]
 screen-keyboard-enabled=true
 

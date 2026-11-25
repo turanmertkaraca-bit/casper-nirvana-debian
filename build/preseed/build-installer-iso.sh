@@ -337,18 +337,32 @@ sync
 umount "$WORK/efimnt"
 
 # Also in the ISO tree itself: this is the exact path Ventoy chainloads.
-# Reuse Debian's own EFI directory if it shipped one under a different case —
-# creating a second /EFI next to an existing /efi makes the ISO9660 level
-# collide and mkisofs aborts.
+#
+# Debian 13's netinst ships the tree LOWERCASE as /EFI/boot. Writing to
+# /EFI/BOOT next to it does NOT make mkisofs abort (the old comment here claimed
+# it did) — libisofs silently renames both at the ISO9660 level to BOOT0 and
+# BOOT1, which is invisible in Rock Ridge/Joliet (so the build and every test
+# still pass) but wrong for plain-ISO9660 readers. So: reuse whatever EFI
+# directory already exists, matching case, and only invent one if there is none.
 EFI_TREE=""
-for cand in "$WORK/iso/EFI/BOOT" "$WORK/iso/efi/boot" "$WORK/iso/Efi/Boot"; do
+for cand in "$WORK/iso/EFI/boot" "$WORK/iso/EFI/BOOT" "$WORK/iso/efi/boot" \
+            "$WORK/iso/efi/BOOT" "$WORK/iso/Efi/Boot" "$WORK/iso/Efi/BOOT"; do
     [ -d "$cand" ] && { EFI_TREE="$cand"; break; }
 done
-[ -n "$EFI_TREE" ] || EFI_TREE="$WORK/iso/EFI/BOOT"
+if [ -z "$EFI_TREE" ]; then
+    # Nothing shipped one: uppercase BOOT is the conventional removable path.
+    EFI_TREE="$WORK/iso/EFI/BOOT"
+fi
 mkdir -p "$EFI_TREE" "$WORK/iso/boot/grub"
 cp -a "$WORK/efi/EFI/BOOT/BOOTIA32.EFI" "$EFI_TREE/BOOTIA32.EFI"
 [ -f "$WORK/efi/EFI/BOOT/BOOTX64.EFI" ] && \
     cp -a "$WORK/efi/EFI/BOOT/BOOTX64.EFI" "$EFI_TREE/BOOTX64.EFI"
+# Assert there is exactly one EFI/BOOT directory in the tree; two cases of the
+# same name is what makes libisofs rename them.
+efi_dirs=$(cd "$WORK/iso" && find . -maxdepth 2 -type d -iname 'boot' -path './[Ee][Ff][Ii]/*' | wc -l)
+[ "$efi_dirs" -le 1 ] \
+    || die "$efi_dirs case-variant EFI/*/boot directories in the ISO tree — libisofs will rename them"
+ok "EFI tree: ${EFI_TREE#$WORK/iso/}"
 cp -a "$EFI_IMG" "$WORK/iso/boot/grub/efi.img"
 
 # ── 9. rebuild the ISO with BOTH firmware paths ────────────────────────────
@@ -364,9 +378,34 @@ elif [ -f "$WORK/iso/isolinux/isolinux.bin" ]; then
 fi
 
 OUT_TMP="$OUT.tmp"
+# ── the isohybrid system area ──────────────────────────────────────────────
+# Without this the rebuilt ISO has ZEROED LBA 0 — no MBR boot code, no
+# partition table — even though Debian's original netinst has a full isohybrid
+# MBR there. An El Torito CD still boots from `-cdrom` and from most firmware,
+# but a stick written with `dd` has nothing to boot: the classic "works in the
+# emulator, dead on hardware" failure. The 432-byte isohdpfx.bin is the MBR
+# bootstrap, and we take it from the netinst we are already remastering so
+# there is no extra dependency. `-isohybrid-gpt-basdat` makes the same image
+# usable as a GPT-partitioned USB and as an HFS+/APM disc, matching Debian's
+# own /.disk/mkisofs recipe.
+ISOHDPFX=""
+for cand in "$WORK/iso/isolinux/isohdpfx.bin" /usr/lib/ISOLINUX/isohdpfx.bin \
+            /usr/lib/syslinux/modules/bios/isohdpfx.bin \
+            /usr/share/syslinux/isohdpfx.bin; do
+    [ -f "$cand" ] && { ISOHDPFX="$cand"; break; }
+done
+if [ -n "$ISOHDPFX" ]; then
+    HYBRID_ARGS="-isohybrid-mbr $ISOHDPFX -isohybrid-gpt-basdat -isohybrid-apm-hfsplus"
+    ok "isohybrid MBR: $ISOHDPFX"
+else
+    HYBRID_ARGS=""
+    echo "WARNING: no isohdpfx.bin found — the ISO will boot from CD but not from a dd'd USB stick" >&2
+fi
+
 if [ "$BIOS_KIND" = "grub" ]; then
     info "rebuilding ISO: BIOS (GRUB eltorito) + IA32/x64 EFI"
-    xorriso -as mkisofs -r -J -joliet-long -l \
+    # shellcheck disable=SC2086
+    xorriso -as mkisofs -r -J -joliet-long -l $HYBRID_ARGS \
         -b "$BIOS_IMG" -no-emul-boot -boot-load-size 4 -boot-info-table --grub2-boot-info \
         -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
         -V "CasperOS 13 amd64" \
@@ -374,7 +413,8 @@ if [ "$BIOS_KIND" = "grub" ]; then
         || die "xorriso rebuild failed (BIOS grub + EFI)"
 elif [ "$BIOS_KIND" = "isolinux" ]; then
     info "rebuilding ISO: BIOS (isolinux) + IA32/x64 EFI"
-    xorriso -as mkisofs -r -J -joliet-long -l \
+    # shellcheck disable=SC2086
+    xorriso -as mkisofs -r -J -joliet-long -l $HYBRID_ARGS \
         -b "$BIOS_IMG" -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table \
         -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
         -V "CasperOS 13 amd64" \
@@ -382,13 +422,29 @@ elif [ "$BIOS_KIND" = "isolinux" ]; then
         || die "xorriso rebuild failed (isolinux + EFI)"
 else
     info "rebuilding ISO: EFI only (netinst shipped no BIOS loader)"
-    xorriso -as mkisofs -r -J -joliet-long -l \
+    # shellcheck disable=SC2086
+    xorriso -as mkisofs -r -J -joliet-long -l $HYBRID_ARGS \
         -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
         -V "CasperOS 13 amd64" \
         -o "$OUT_TMP" "$WORK/iso" 2>&1 | tail -3 \
         || die "xorriso rebuild failed (EFI only)"
 fi
 mv -f "$OUT_TMP" "$OUT"
+
+# ── 10. assert the tablet can actually boot the result ─────────────────────
+# The system area must be non-empty, or a dd'd stick cannot boot at all.
+SYSTEM_AREA=$(xorriso -indev "$OUT" -report_system_area plain 2>/dev/null | head -3 | tr '\n' ' ')
+printf '::notice::ISO system area: %s\n' "${SYSTEM_AREA:-EMPTY}" >&2
+if [ -n "$ISOHDPFX" ]; then
+    xorriso -indev "$OUT" -report_system_area plain 2>/dev/null | grep -qi 'MBR' \
+        || die "the finished ISO has no MBR system area — a dd'd USB stick would not boot"
+fi
+# The EFI El Torito entry has to be there as well as the BIOS one.
+ELTORITO=$(xorriso -indev "$OUT" -report_el_torito plain 2>/dev/null || true)
+printf '%s\n' "$ELTORITO" | grep -qi 'El Torito' \
+    || die "no El Torito boot record in the finished ISO"
+printf '%s\n' "$ELTORITO" | grep -qi 'efi' \
+    || echo "WARNING: no EFI El Torito entry found — UEFI boot may fail" >&2
 
 # ── 10. assert the tablet can actually boot the result ─────────────────────
 B32=$(xorriso -indev "$OUT" -find / -name 'BOOTIA32.EFI' 2>/dev/null | tr -d "'" | head -1)

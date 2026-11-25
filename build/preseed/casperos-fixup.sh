@@ -209,6 +209,11 @@ if [ -d /usr/share/gnome-shell/extensions ]; then
     } > /etc/dconf/db/local.d/10-casper-extensions
 fi
 dconf update 2>/dev/null || true
+# Compile the GDM greeter database too. The greeter reads DCONF_PROFILE=gdm,
+# and until configs/etc/dconf/profile/gdm existed nothing referenced
+# system-db:gdm, so the login-screen OSK setting was compiled and ignored.
+dconf update -f 2>/dev/null || true
+[ -x /usr/share/gdm/generate-config ] && /usr/share/gdm/generate-config >/dev/null 2>&1 || true
 
 progress "5. display manager: GDM on Wayland (touch-first)"
 # ── 5. display manager: GDM on Wayland (touch-first) ───────────────────────
