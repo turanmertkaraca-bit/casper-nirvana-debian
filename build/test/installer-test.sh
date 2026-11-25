@@ -343,9 +343,11 @@ fi
 # DEBIAN_FRONTEND=text. The install finished iff the fixup completed; the boot
 # prompt in phase 2 is the real proof.
 chk "$([ "$FIXUP_OK" = 1 ] && echo 1 || echo 0)" "install completed"
-# GNOME via GDM. gdm3 ships Alias=display-manager.service, so `systemctl
-# enable gdm3` creates /etc/systemd/system/display-manager.service.
-chk "$([ -e "$M/etc/systemd/system/display-manager.service" ] && echo 1 || echo 0)" "gdm3 enabled as display-manager"
+# GNOME via GDM. trixie's gdm3 unit has NO [Install] section (Debian strips it;
+# the display-manager alias is debconf-managed), so `systemctl enable gdm3` is a
+# no-op. What actually decides the display manager is these two files.
+chk "$(grep -q 'gdm3' "$M/etc/X11/default-display-manager" 2>/dev/null && echo 1 || echo 0)" "GDM is the default display manager"
+chk "$([ -L "$M/etc/systemd/system/display-manager.service" ] && echo 1 || echo 0)" "display-manager.service symlink present"
 chk "$([ -x "$M/usr/bin/gnome-shell" ] || [ -x "$M/usr/bin/gnome-session" ] && echo 1 || echo 0)" "GNOME session installed"
 chk "$([ -x "$M/usr/bin/ibus-daemon" ] && echo 1 || echo 0)" "ibus installed (on-screen keyboard)"
 chk "$(grep -q 'screen-keyboard-enabled=true' "$M/etc/dconf/db/local.d/00-casper-desktop" 2>/dev/null && echo 1 || echo 0)" "on-screen keyboard enabled"

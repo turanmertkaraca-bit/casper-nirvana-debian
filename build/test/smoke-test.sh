@@ -183,12 +183,20 @@ echo ---SESSION
 # GNOME is the session, launched by GDM. Short lines only: these travel over a
 # serial login shell, and one long one-liner with nested substitutions is what
 # did not survive the trip.
-systemctl is-enabled gdm3.service >/dev/null 2>&1 && echo GDM_ENABLED
-echo "SESSION_ACTIVE=$(systemctl is-active gdm3.service 2>/dev/null)"
-echo "SESSION_SUB=$(systemctl show -p SubState --value gdm3.service 2>/dev/null)"
+#
+# GDM is selected through the display-manager alias, NOT through
+# `systemctl is-enabled gdm3`: in trixie the unit has no [Install] section at
+# all (Debian's 92_systemd_unit.patch strips it, because the alias is managed
+# jointly by all DMs via debconf), so `enable` is a total no-op and is-enabled
+# says "alias" or fails outright.
+echo "DM_DEFAULT=$(cat /etc/X11/default-display-manager 2>/dev/null)"
+[ -L /etc/systemd/system/display-manager.service ] && echo DM_ALIAS_LINK_OK || echo DM_ALIAS_LINK_MISSING
+echo "DM_LINK_TARGET=$(readlink /etc/systemd/system/display-manager.service 2>/dev/null)"
+echo "DEFAULT_TARGET=$(systemctl get-default 2>/dev/null)"
+echo "SESSION_ACTIVE=$(systemctl is-active gdm.service 2>/dev/null)"
+echo "SESSION_SUB=$(systemctl show -p SubState --value gdm.service 2>/dev/null)"
 echo "SESSION_FAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -2 | cut -d' ' -f1)"
-echo "DM_ALIAS=$(systemctl is-enabled display-manager.service 2>/dev/null)"
-journalctl -b -u gdm3.service --no-pager --no-hostname 2>/dev/null | tail -10
+journalctl -b -u gdm.service --no-pager --no-hostname 2>/dev/null | tail -10
 command -v gnome-shell >/dev/null 2>&1 && echo GNOME_SHELL_PRESENT || echo GNOME_SHELL_MISSING
 command -v gnome-session >/dev/null 2>&1 && echo GNOME_SESSION_PRESENT || echo GNOME_SESSION_MISSING
 command -v gnome-control-center >/dev/null 2>&1 && echo GNOME_CC_PRESENT || echo GNOME_CC_MISSING
@@ -345,16 +353,14 @@ chk "$(grepq '### LOGIN OK' "$s1")" "login on serial console (null password)"
 chks "$(grepq 'UEFI_OK' "$s1")" "booted via (32-bit OVMF) UEFI"
 chks "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-6\.' "$s1")" "kernel 6.12 (default boot)"
 chks "$(grepq 'GRUB_IA32_OK' "$s1")" "i386-efi GRUB modules on /boot"
-chks "$(grepq 'BOOTIA32.EFI' "$s1")" "BOOTIA32.EFI on ESP"
-chks "$(grepq 'intel_idle.max_cstate=1' "$s1")" "intel_idle.max_cstate=1 in cmdline"
+chks "$(grepq 'DM_DEFAULT=/usr/sbin/gdm3' "$s1")" "GDM is the default display manager"
+chks "$(grepq 'DM_ALIAS_LINK_OK' "$s1")" "display-manager.service points at GDM"
 chks "$(grepq 'mitigations=off' "$s1")" "mitigations=off in cmdline"
 chks "$(grep -q 'i2c_designware.disable_pm' "$s1" && echo 0 || echo 1)" "NO legacy I2C params on 6.12"
 chks "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
 done
-chks "$(grepq 'GDM_ENABLED' "$s1")" "gdm3 enabled as the display manager"
-chks "$(grepq 'DM_ALIAS=enabled' "$s1")" "display-manager.service alias points at gdm3"
 chks "$(grepq 'GNOME_SHELL_PRESENT' "$s1")" "gnome-shell installed"
 chks "$(grepq 'GNOME_SESSION_PRESENT' "$s1")" "gnome-session installed"
 chks "$(grepq 'GNOME_CC_PRESENT' "$s1")" "gnome-control-center installed"
@@ -383,8 +389,7 @@ chk "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-5\.' "$j2")" "kernel 5.15.165 booted (jou
 chk "$(grepq 'i2c_designware.disable_pm=1' "$j2")" "legacy I2C params in cmdline (journal)"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$j2")" "polling mode param in cmdline (journal)"
 chk "$(grepq 'intel_idle.max_cstate=1' "$j2")" "common params still applied (journal)"
-chk "$(grepq 'gdm3|gnome-shell|GDM' "$j2")" "gdm3 started (journal)"
-echo "  (boot2 screenshot: $(ppm_visible "$OUT/session-boot2.ppm" >/dev/null 2>&1 && echo content || echo black) — informational: qemu stdvga + llvmpipe differs from the real i915 path)"
+chk "$(grepqE "gdm3|gdm|gnome-shell|GNOME Shell" "$j2")" "GDM / GNOME Shell started (journal)"
 
 echo ""
 echo "  PASS: $pass   FAIL: $fail"

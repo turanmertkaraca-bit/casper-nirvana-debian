@@ -63,28 +63,38 @@ cp -a "$CR/etc/dpkg/dpkg.cfg.d/10-casper" /etc/dpkg/dpkg.cfg.d/
 
 # ── point apt at the repository that is ON THE INSTALL MEDIUM ──────────────
 # The install must not need the network. The ISO carries a flat apt repository
-# ("casperos-offline") holding the exact closure of packages.list, so this
-# replaces whatever d-i wrote instead of trying to reach deb.debian.org.
+# ("casperos-offline") holding the exact closure of packages.list.
+#
+# The path comes from the preseed's late_command, which resolves it in the
+# INSTALLER environment and bind-mounts it into the target. Guessing from
+# inside the chroot does not work: /cdrom is the installer's own mount and does
+# not exist here, so the old search always fell through to the network — on a
+# tablet with none.
 #
 # [trusted=yes] because the repo is unsigned local media: there is no key to
-# distribute, and the ISO itself is the trust boundary — the same model as any
+# distribute and the ISO itself is the trust boundary, the same model as any
 # Debian install CD. `file:` keeps apt away from any proxy/DNS path.
-OFFLINE_REPO=""
-for cand in /media/cdrom /cdrom /media/cdrom0; do
-    if [ -f "$cand/Packages.gz" ] || [ -f "$cand/Packages" ]; then
-        OFFLINE_REPO="$cand"
-        break
-    fi
-done
+OFFLINE_REPO="${CASPER_OFFLINE_REPO:-}"
+if [ -z "$OFFLINE_REPO" ] || [ ! -d "$OFFLINE_REPO" ]; then
+    # Fallback for a manual run from a checkout: locate it the hard way.
+    OFFLINE_REPO=""
+    for cand in /media/casperos-offline /media/cdrom/casperos-offline \
+                /cdrom/casperos-offline /media/cdrom0/casperos-offline; do
+        if [ -f "$cand/Packages.gz" ] || [ -f "$cand/Packages" ]; then
+            OFFLINE_REPO="$cand"
+            break
+        fi
+    done
+fi
 
-if [ -n "$OFFLINE_REPO" ]; then
-    log "using the offline repository on the install medium: $OFFLINE_REPO"
+if [ -n "$OFFLINE_REPO" ] && { [ -f "$OFFLINE_REPO/Packages.gz" ] || [ -f "$OFFLINE_REPO/Packages" ]; }; then
+    log "using the offline repository: $OFFLINE_REPO"
     rm -f /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
     printf 'deb [trusted=yes] file:%s ./\n' "$OFFLINE_REPO" > /etc/apt/sources.list
 else
     # No medium found: fall back to the network rather than fail, but say so
     # loudly — this is the only path that can still need Wi-Fi.
-    log "WARN: offline repository not found on the install medium — falling back to the network"
+    log "WARN: offline repository not found (CASPER_OFFLINE_REPO='${CASPER_OFFLINE_REPO:-}') — falling back to the network"
     # d-i's apt-setup writes a one-line /etc/apt/sources.list and this repo's
     # own image build writes deb822 .sources; handle both. (With an empty
     # sources.list.d/ the old code passed a literal glob to sed, which exited 2
@@ -175,12 +185,30 @@ dconf update 2>/dev/null || true
 
 # ── 5. display manager: GDM on Wayland (touch-first) ───────────────────────
 log "gdm3"
-systemctl enable gdm3.service 2>/dev/null || true
-# GDM owns the VT it starts on; getty@tty1 would fight it for the console.
+# See 03-configure.sh: `systemctl enable gdm3.service` is a no-op in trixie
+# (Debian strips the unit's [Install] section; the display-manager alias is
+# debconf-managed). Set the two things that actually select it.
+mkdir -p /etc/X11 /etc/systemd/system
+printf '/usr/sbin/gdm3\n' > /etc/X11/default-display-manager
+# /usr/lib/systemd/system/gdm3.service is itself a symlink to gdm.service in
+# trixie, so resolve rather than hardcode.
+GDM_UNIT=""
+for u in /usr/lib/systemd/system/gdm3.service /usr/lib/systemd/system/gdm.service \
+         /lib/systemd/system/gdm3.service /lib/systemd/system/gdm.service; do
+    [ -e "$u" ] && { GDM_UNIT="$u"; break; }
+done
+if [ -n "$GDM_UNIT" ]; then
+    ln -sf "$GDM_UNIT" /etc/systemd/system/display-manager.service
+    log "display-manager.service -> $GDM_UNIT"
+else
+    log "WARN: no gdm unit found — GNOME will not start automatically"
+fi
+echo "shared/default-x-display-manager select gdm3" | debconf-set-selections 2>/dev/null || true
+systemctl set-default graphical.target 2>/dev/null || true
+# GDM owns the VT it starts on; getty@tty1 fights it for the console.
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
 systemctl enable getty@tty2.service 2>/dev/null || true
-systemctl set-default graphical.target 2>/dev/null || true
 
 # ── 6. plymouth theme ──────────────────────────────────────────────────────
 log "plymouth theme"

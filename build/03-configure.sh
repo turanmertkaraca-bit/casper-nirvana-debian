@@ -170,14 +170,47 @@ dconf update 2>/dev/null || true
 
 # ── 9. display manager: GDM on Wayland (touch-first) ───────────────────────
 log "enabling gdm3 (GNOME session)"
-systemctl enable gdm3.service 2>/dev/null || true
-# GDM owns the VT it starts on; getty@tty1 would fight it for the console.
+# `systemctl enable gdm3.service` DOES NOTHING in trixie and returns 0 while
+# printing only a warning: Debian's packaging (patch 92_systemd_unit.patch)
+# strips even upstream's [Install] Alias=, because the display-manager.service
+# alias is managed jointly by all DMs through a debconf question. So the unit
+# has no [Install] section at all and enable is a total no-op — which is why
+# `systemctl is-enabled display-manager.service` reported nothing.
+#
+# What actually selects the display manager in Debian is the debconf answer
+# plus the symlink the postinst creates:
+#   /etc/X11/default-display-manager  -> "gdm3"
+#   /etc/systemd/system/display-manager.service -> gdm3.service
+# and graphical.target has Wants=display-manager.service. Set both explicitly,
+# because in a noninteractive chroot build the postinst's own
+# `else rm -f $DEFAULT_SERVICE` branch can leave the symlink absent.
+mkdir -p /etc/X11
+printf '/usr/sbin/gdm3\n' > /etc/X11/default-display-manager
+mkdir -p /etc/systemd/system
+# Resolve the real unit rather than hardcoding a name: /usr/lib/systemd/system/
+# gdm3.service is itself a symlink to gdm.service in trixie, and the unit name
+# has changed across releases. Point display-manager.service at whichever exists.
+GDM_UNIT=""
+for u in /usr/lib/systemd/system/gdm3.service /usr/lib/systemd/system/gdm.service \
+         /lib/systemd/system/gdm3.service /lib/systemd/system/gdm.service; do
+    [ -e "$u" ] && { GDM_UNIT="$u"; break; }
+done
+if [ -n "$GDM_UNIT" ]; then
+    ln -sf "$GDM_UNIT" /etc/systemd/system/display-manager.service
+    log "display-manager.service -> $GDM_UNIT"
+else
+    echo "WARN: no gdm unit found — GNOME will not start automatically" >> "$REPORT"
+fi
+# Belt and braces: also record the debconf answer, so a later `dpkg-reconfigure
+# x-display-manager` does not silently switch the default away.
+echo "shared/default-x-display-manager select gdm3" | debconf-set-selections 2>/dev/null || true
+systemctl set-default graphical.target 2>/dev/null || true
+# GDM owns the VT it starts on; getty@tty1 fights it for the console.
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
 # Recovery console. GNOME is the only session, so this is the way back in if
 # the shell ever fails to start.
 systemctl enable getty@tty2.service 2>/dev/null || true
-systemctl set-default graphical.target 2>/dev/null || true
 
 # ── 10. plymouth splash theme ──────────────────────────────────────────────
 log "setting plymouth theme: casper-splash"

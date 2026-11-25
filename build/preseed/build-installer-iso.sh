@@ -221,16 +221,29 @@ cp -a "$WORK/payload/casperos" "$WORK/iso/casperos"
 # top level. This is the whole point: after this, `apt-get install` inside the
 # target needs no network.
 info "placing the offline repository on the ISO"
-mkdir -p "$WORK/iso/pool"
-find "$OFFLINE/pool" -name '*.deb' -type f -exec cp -a {} "$WORK/iso/pool/" \; 2>/dev/null || true
-cp -a "$OFFLINE/Packages" "$WORK/iso/" 2>/dev/null || true
-cp -a "$OFFLINE/Packages.gz" "$WORK/iso/" 2>/dev/null || true
-cp -a "$OFFLINE/Release" "$WORK/iso/" 2>/dev/null || true
-ISO_DEBS=$(find "$WORK/iso/pool" -name '*.deb' -type f | wc -l)
+# In its OWN top-level directory, never at the ISO root. apt-cdrom's
+# FindPackages() stops descending the moment it sees Packages/Packages.gz at
+# depth 0 and then rewrites the CD's sources.list line to `deb cdrom:[...]/
+# /` — so a root-level index SHADOWS the netinst's own /dists/ tree and the
+# installer can no longer find the base system or tasksel, and pkgsel dies.
+# A subdirectory index is found by the same recursive scan and is added as a
+# second source, leaving the Debian one intact.
+OFFLINE_DIR="$WORK/iso/casperos-offline"
+rm -rf "$OFFLINE_DIR"
+mkdir -p "$OFFLINE_DIR"
+find "$OFFLINE/pool" -name '*.deb' -type f -exec cp -a {} "$OFFLINE_DIR/" \; 2>/dev/null || true
+cp -a "$OFFLINE/Packages" "$OFFLINE_DIR/" 2>/dev/null || true
+cp -a "$OFFLINE/Packages.gz" "$OFFLINE_DIR/" 2>/dev/null || true
+ISO_DEBS=$(find "$OFFLINE_DIR" -name '*.deb' -type f | wc -l)
 [ "$ISO_DEBS" -gt 100 ] || die "only $ISO_DEBS packages on the ISO — the offline repo did not copy"
-[ -f "$WORK/iso/Packages.gz" ] || [ -f "$WORK/iso/Packages" ] \
-    || die "no Packages index at the ISO root — apt could not use the medium"
-ok "offline repo on the ISO: $ISO_DEBS packages"
+[ -f "$OFFLINE_DIR/Packages.gz" ] || [ -f "$OFFLINE_DIR/Packages" ] \
+    || die "no Packages index in /casperos-offline — apt could not use the medium"
+# Assert the guard that matters: nothing may sit at the ISO root that would
+# shadow the netinst's /dists/ scan.
+for poison in Packages Packages.gz; do
+    [ -e "$WORK/iso/$poison" ] && die "/$poison at the ISO root would shadow the installer's own package index"
+done
+ok "offline repo on the ISO: $ISO_DEBS packages in /casperos-offline"
 
 
 # ── 7. 32-bit UEFI boot — the reason stock netinst won't start on this tablet ─
