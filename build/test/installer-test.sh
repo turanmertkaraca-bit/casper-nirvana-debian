@@ -89,17 +89,24 @@ while kill -0 "$QPID" 2>/dev/null; do
     # sat at exactly 7200s instead of failing fast. Progress is now measured by
     # *semantic* counters that only advance when the installer really does
     # something: the serial log's size and the number of lines in it that name
-    # an actual install stage. A spinning cursor and a repainted box move
-    # neither. (The remote syslog is gone with the network: this VM has none.)
+    # an actual install stage. A repainted box moves neither.
+    #
+    # SERIAL_BYTES is deliberately NOT part of the progress signal. It was in
+    # the first version of this and it is wrong: newt redraws its dialog frame
+    # continuously, so the byte count keeps growing while the installer sits at
+    # a prompt — which is exactly the 7200s hang this test exists to catch. Only
+    # stage-naming lines count as progress. (The remote syslog is gone with the
+    # network: this VM has none, so it cannot contribute either.)
     SERIAL_BYTES=$(stat -c %s "$OUT/serial-install.log" 2>/dev/null || echo 0)
     # `cat file 2>/dev/null` rather than `< file`: a missing file makes the
     # redirection itself fail, which prints "No such file or directory" to
     # the log and can abort the loop under set -e.
     STAGE_LINES=$( { cat "$OUT/serial-install.log" 2>/dev/null || true; } \
         | tr -d '\000' \
+        | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][AB0]//g' -e 's/\r/\n/g' \
         | grep -acE 'PRESEED-APPLIED|base-installer|Unpacking|Setting up|Selecting previously|Processing triggers|in-target|casperos-fixup|pkgsel|partman|Installing new version|Configuring |dpkg-deb' || true)
     STAGE_LINES=${STAGE_LINES:-0}
-    CUR_PROGRESS="$SERIAL_BYTES/$STAGE_LINES"
+    CUR_PROGRESS="$STAGE_LINES"
     if [ "$CUR_PROGRESS" = "$LAST_PROGRESS" ]; then
         IDLE=$((IDLE+30))
     else
@@ -137,13 +144,13 @@ while kill -0 "$QPID" 2>/dev/null; do
         echo "  ... install running (${WAITED}s); serial=${SERIAL_BYTES}B stage-lines=${STAGE_LINES} idle=${IDLE}s"
     fi
 
-    # 2. Real stall: no semantic progress for 20 minutes. The old threshold was
-    # 900s against a signal that was always moving, which is the opposite of
-    # what a stall detector should be.
-    if [ "$IDLE" -ge 1200 ]; then
+    # 2. Real stall: no stage-naming line for 15 minutes. The original version
+    # compared a signal that was always moving (a byte count over a redrawing
+    # ncurses console), which is the opposite of what a stall detector should do.
+    if [ "$IDLE" -ge 900 ]; then
         echo "ERROR: installer stuck (no install progress for ${IDLE}s)"
-        printf '::error::installer made no progress for %ss (serial %sB, %s stage lines)\n' \
-            "$IDLE" "$SERIAL_BYTES" "$STAGE_LINES" >&2
+        printf '::error::installer made no progress for %ss (%s stage lines, serial %sB)\n' \
+            "$IDLE" "$STAGE_LINES" "$SERIAL_BYTES" >&2
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
