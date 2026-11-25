@@ -424,4 +424,16 @@ if [ "$fail" -gt 0 ]; then
     done
     echo "SOME CHECKS FAILED — inspect $OUT/"
 fi
+
+# Reclaim the copy of the image before exiting. It is ~3 GiB, it has already
+# been booted twice and dumped to the logs, and the next CI step is `xz -6e`
+# over a 6 GiB image — which needs every GiB it can get. The logs, journals,
+# screenshots and static results all stay.
+if [ -n "${SMOKE_KEEP_IMG:-}" ]; then
+    echo "keeping $OUT/test.img (SMOKE_KEEP_IMG set)"
+else
+    rm -f "$OUT/test.img" "$OUT"/vars-*.fd "$OUT"/ser-*.sock 2>/dev/null || true
+    echo "reclaimed $OUT/test.img"
+fi
+
 exit "$fail"

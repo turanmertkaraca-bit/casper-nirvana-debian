@@ -64,10 +64,20 @@ jobs:
           # of runner disk. Drop it before the compressor needs that space.
           rm -rf /tmp/casper-test/test.img
           df -h /tmp || true
-          ls -la /tmp/casper-n220.img || true
+          [ -f casper-n220.img ] || { printf '::error::compress: /tmp/casper-n220.img is missing — the build step did not produce it\n'; exit 1; }
+          echo "image: $(stat -c %s casper-n220.img) bytes, free: $(df -Pk /tmp | awk 'NR==2{print $4}') KB"
           # -T0 asks xz to size its buffers from total cores, and on a runner it
           # can exceed the default memory cap and exit immediately. Bound it.
-          xz -6e -T0 --memlimit-compress=4GiB -c casper-n220.img > casper-n220.img.xz
+          # Report the actual xz status: this step failed twice in 0-1s with the
+          # reason buried in a log that needs a token to read, so the failure has
+          # to arrive as an annotation.
+          if ! xz -6e -T0 --memlimit-compress=4GiB -c casper-n220.img > casper-n220.img.xz; then
+              rc=$?
+              printf '::error::compress: xz exited %s (image %s bytes, free %s KB)\n' \
+                  "$rc" "$(stat -c %s casper-n220.img)" "$(df -Pk /tmp | awk 'NR==2{print $4}')"
+              exit 1
+          fi
+          echo "xz: $(stat -c %s casper-n220.img.xz) bytes"
           # The raw image is not uploaded anywhere (only the .xz parts are),
           # and "Run summary" has already read its size. It is 6 GB of runner
           # disk that nothing below this line needs.
@@ -138,7 +148,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            xorriso isolinux cpio gzip xz-utils qemu-system-x86 qemu-utils ovmf curl \
+            xorriso isolinux cpio gzip xz-utils qemu-system-x86 qemu-utils ovmf curl hfsprogs \
             grub-efi-ia32-bin grub-efi-amd64-bin grub-pc-bin dosfstools mtools file \
             mmdebstrap debootstrap debian-archive-keyring apt-utils
 

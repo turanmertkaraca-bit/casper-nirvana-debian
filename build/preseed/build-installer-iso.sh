@@ -18,7 +18,12 @@ done
 
 info() { echo -e "\033[1;36m→\033[0m $*"; }
 ok()   { echo -e "\033[1;32m✓\033[0m $*"; }
-die()  { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
+die()  { echo -e "\033[1;31m✗\033[0m $*" >&2; printf '::error::ISO BUILDER: %s\n' "$*" >&2; exit 1; }
+# Name the failing line as an annotation. This script's real output is a job log
+# that needs a token to read, and the annotations are the only part a reader
+# without one can see — a bare `exit 1` says nothing about which command died.
+trap 'rc=$?; printf "::error::ISO BUILDER failed at line %s (exit %s): %s\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
+set -o errtrace
 
 WORK=/tmp/casper-installer
 rm -rf "$WORK" && mkdir -p "$WORK/iso" "$WORK/payload/casperos"
@@ -385,21 +390,35 @@ OUT_TMP="$OUT.tmp"
 # but a stick written with `dd` has nothing to boot: the classic "works in the
 # emulator, dead on hardware" failure. The 432-byte isohdpfx.bin is the MBR
 # bootstrap, and we take it from the netinst we are already remastering so
-# there is no extra dependency. `-isohybrid-gpt-basdat` makes the same image
-# usable as a GPT-partitioned USB and as an HFS+/APM disc, matching Debian's
-# own /.disk/mkisofs recipe.
+# there is no extra dependency.
+#
+# Each flag is probed separately, because they are not equally supported:
+#  -isohybrid-apm-hfsplus needs mkfs.hfsplus (hfsprogs), which a plain runner
+# does NOT have, and xorriso fails the whole build without it. APM is an
+# Apple-partition-map nicety; the MBR is what makes a dd'd stick boot. So the
+# MBR and GPT flags are the ones that must work, and APM is best-effort.
 ISOHDPFX=""
 for cand in "$WORK/iso/isolinux/isohdpfx.bin" /usr/lib/ISOLINUX/isohdpfx.bin \
             /usr/lib/syslinux/modules/bios/isohdpfx.bin \
             /usr/share/syslinux/isohdpfx.bin; do
     [ -f "$cand" ] && { ISOHDPFX="$cand"; break; }
 done
+HYBRID_ARGS=""
 if [ -n "$ISOHDPFX" ]; then
-    HYBRID_ARGS="-isohybrid-mbr $ISOHDPFX -isohybrid-gpt-basdat -isohybrid-apm-hfsplus"
-    ok "isohybrid MBR: $ISOHDPFX"
+    HYBRID_ARGS="-isohybrid-mbr $ISOHDPFX"
+    # GPT alongside the MBR costs nothing and makes the same image usable as a
+    # GPT USB; it needs no external tool.
+    HYBRID_ARGS="$HYBRID_ARGS -isohybrid-gpt-basdat"
+    if command -v mkfs.hfsplus >/dev/null 2>&1 || command -v mkfs.hfs >/dev/null 2>&1; then
+        HYBRID_ARGS="$HYBRID_ARGS -isohybrid-apm-hfsplus"
+        ok "isohybrid MBR + GPT + APM ($ISOHDPFX)"
+    else
+        printf '::notice::isohybrid: MBR + GPT only (no mkfs.hfsplus, so no APM/Apple partition map)\n'
+        ok "isohybrid MBR + GPT ($ISOHDPFX)"
+    fi
 else
-    HYBRID_ARGS=""
-    echo "WARNING: no isohdpfx.bin found — the ISO will boot from CD but not from a dd'd USB stick" >&2
+    printf '::error::isohybrid: no isohdpfx.bin found — the ISO will boot from CD but NOT from a dd'"'"'d USB stick\n' >&2
+    die "no isohdpfx.bin (looked in the netinst and the syslinux/isolinux package paths)"
 fi
 
 if [ "$BIOS_KIND" = "grub" ]; then

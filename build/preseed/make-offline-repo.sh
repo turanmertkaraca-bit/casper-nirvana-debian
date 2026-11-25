@@ -28,7 +28,9 @@ OUT="${1:?usage: make-offline-repo.sh <outdir>}"
 
 info() { echo -e "\033[1;36m→\033[0m $*"; }
 ok()   { echo -e "\033[1;32m✓\033[0m $*"; }
-die()  { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
+die()  { echo -e "\033[1;31m✗\033[0m $*" >&2; printf '::error::OFFLINE REPO: %s\n' "$*" >&2; exit 1; }
+trap 'rc=$?; printf "::error::OFFLINE REPO failed at line %s (exit %s): %s\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2' ERR
+set -o errtrace
 
 command -v mmdebstrap >/dev/null || die "mmdebstrap required"
 command -v apt-ftparchive >/dev/null || die "apt-utils required (apt-ftparchive)"
