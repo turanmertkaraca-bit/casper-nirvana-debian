@@ -62,7 +62,7 @@ SYSLOG_PID=0
 # (The remote syslog then has no path either, so the serial log and the
 # fixup's own sentinel file on disk are the evidence.)
 qemu-system-x86_64 \
-    -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
+    -enable-kvm -machine q35 -m 2048 -smp 4 -cpu qemu64 \
     -cdrom "$ISO" \
     -drive file="$OUT/target.disk",format=raw,if=ide \
     -nic none \
@@ -108,13 +108,19 @@ while kill -0 "$QPID" 2>/dev/null; do
     STAGE_LINES=$( { cat "$OUT/serial-install.log" 2>/dev/null || true; } \
         | tr -d '\000' \
         | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][AB0]//g' -e 's/\r/\n/g' \
-        | grep -acE 'PRESEED-APPLIED|base-installer|Unpacking|Setting up|Selecting previously|Processing triggers|in-target|casperos-fixup|pkgsel|partman|Installing new version|Configuring |dpkg-deb' || true)
+        | grep -acE 'PRESEED-APPLIED|base-installer|Unpacking|Setting up|Selecting previously|Processing triggers|in-target|casperos-fixup|pkgsel|partman|Installing new version|Configuring |dpkg-deb|^casperos: ' || true)
     STAGE_LINES=${STAGE_LINES:-0}
     CUR_PROGRESS="$STAGE_LINES"
     if [ "$CUR_PROGRESS" = "$LAST_PROGRESS" ]; then
         IDLE=$((IDLE+30))
     else
         IDLE=0
+        # Name the newest stage line we just saw. The fixup reports on ttyS0 via
+        # CASPER_PROGRESS precisely so this can say what it is doing.
+        NEWEST=$( { cat "$OUT/serial-install.log" 2>/dev/null || true; } \
+            | tr -d '\000' | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\r/\n/g' \
+            | grep -aE '^casperos: ' | tail -1 | cut -c1-120 || true)
+        [ -n "$NEWEST" ] && printf '::notice::progress: %s\n' "$NEWEST"
     fi
     LAST_PROGRESS="$CUR_PROGRESS"
 
@@ -148,10 +154,13 @@ while kill -0 "$QPID" 2>/dev/null; do
         echo "  ... install running (${WAITED}s); serial=${SERIAL_BYTES}B stage-lines=${STAGE_LINES} idle=${IDLE}s"
     fi
 
-    # 2. Real stall: no stage-naming line for 15 minutes. The original version
+    # 2. Real stall: no stage-naming line for 25 minutes. The original version
     # compared a signal that was always moving (a byte count over a redrawing
     # ncurses console), which is the opposite of what a stall detector should do.
-    if [ "$IDLE" -ge 900 ]; then
+    # 25 min because the work is genuinely long on a 1-vCPU guest: the GNOME
+    # package set alone is 20-45 min of dpkg, and the 5.15 module compression is
+    # several minutes more. A shorter threshold measures CPU speed, not health.
+    if [ "$IDLE" -ge 1500 ]; then
         echo "ERROR: installer stuck (no install progress for ${IDLE}s)"
         printf '::error::installer made no progress for %ss (%s stage lines, serial %sB)\n' \
             "$IDLE" "$STAGE_LINES" "$SERIAL_BYTES" >&2
@@ -159,6 +168,17 @@ while kill -0 "$QPID" 2>/dev/null; do
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
         exit 1
+    fi
+
+    # Evidence that survives the runner being killed. The previous run ended
+    # `cancelled` mid-teardown and lost its diagnostics exactly when they
+    # mattered, so the live tail is refreshed every loop instead of on exit.
+    if [ $((WAITED % 60)) = 0 ]; then
+        { echo "=== last 200 serial lines at ${WAITED}s (idle ${IDLE}s) ==="
+          tail -c 20000 "$OUT/serial-install.log" 2>/dev/null | tr -d '\000' \
+            | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][AB0]//g' -e 's/\r//g' \
+            | tail -200
+        } > "$OUT/live-evidence.log" 2>/dev/null || true
     fi
 
     # Every 15 minutes, say where the install is. These land as annotations,

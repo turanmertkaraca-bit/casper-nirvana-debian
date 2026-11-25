@@ -49,6 +49,19 @@ else
 fi
 
 log() { echo "casperos-fixup: $*"; }
+# ── progress channel that survives an offline install ──────────────────────
+# d-i's `in-target` wraps this script in log-output, which sends BOTH stdout and
+# stderr to syslog. With no network there is no syslog receiver, so every line
+# this script prints goes nowhere — which is why a working-but-slow fixup and a
+# wedged one look identical (a silent 15 minutes and a killed runner).
+# CASPER_PROGRESS is set by the preseed's late_command to /dev/ttyS0, which the
+# chroot has via d-i's bind-mounted /dev. Each stage announces itself there, so
+# a stall at least names the last stage that started.
+progress() {
+    [ -n "${CASPER_PROGRESS:-}" ] || return 0
+    printf 'casperos: %s\n' "$*" > "$CASPER_PROGRESS" 2>/dev/null || true
+}
+progress "fixup start ($(date -u +%H:%M:%S))"
 
 # ── 1. apt + dpkg options, then the full package set ───────────────────────
 log "configuring apt/dpkg"
@@ -111,14 +124,25 @@ else
 fi
 
 log "apt update + installing package set (long)"
-apt-get update -qq
+progress "apt-get update starting"
+apt-get update -qq || { progress "apt-get UPDATE FAILED"; log "ERROR: apt-get update failed"; exit 1; }
+progress "apt-get update done; installing the package set (this is the long one)"
 # The package set is installed from the medium when available. Anything the
 # offline repo happens to lack still resolves from the mirror if there is one.
-apt-get install -y -qq --no-install-recommends $(grep -v '^#' "$B_LIST" | grep -v '^$') || {
-    log "ERROR: package set install failed"
+APT_OUT=/tmp/casperos-apt.log
+# -o APT::Status-Fd would need a tty; a log file plus a stage marker is enough
+# to tell "still unpacking" from "dead" on the next run.
+if apt-get install -y --no-install-recommends $(grep -v '^#' "$B_LIST" | grep -v '^$') \
+        > "$APT_OUT" 2>&1; then
+    progress "package set installed: $(grep -c '^Setting up' "$APT_OUT" 2>/dev/null || echo '?') packages configured"
+else
+    progress "PACKAGE SET INSTALL FAILED — last lines:"
+    tail -5 "$APT_OUT" 2>/dev/null | while IFS= read -r l; do progress "  $l"; done
+    log "ERROR: package set install failed (see $APT_OUT)"
     exit 1
-}
+fi
 
+progress "2. static configuration tree"
 # ── 2. static configuration tree ───────────────────────────────────────────
 log "applying configuration tree"
 cp -a "$CR/etc/." /etc/
@@ -133,6 +157,7 @@ chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
          /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
          /usr/local/bin/casper-nvram 2>/dev/null || true
 
+progress "3. user lvy: drop the placeholder preseed password"
 # ── 3. user lvy: drop the placeholder preseed password ─────────────────────
 log "fixing user lvy (null password)"
 passwd -d lvy
@@ -140,11 +165,13 @@ usermod -aG audio,video,input,adm,plugdev,dip lvy 2>/dev/null || true
 mkdir -p /home/lvy/.config /etc/skel/.config
 chown -R lvy:lvy /home/lvy
 
+progress "4. locale/keyboard defaults (already tr via preseed; make it stick)"
 # ── 4. locale/keyboard defaults (already tr via preseed; make it stick) ────
 log "locale/keyboard"
 update-locale LANG=tr_TR.UTF-8 LANGUAGE=tr:en 2>/dev/null || true
 setupcon --save 2>/dev/null || true
 
+progress "4b. GNOME: panel rotation + dconf defaults + on-screen keyboard"
 # ── 4b. GNOME: panel rotation + dconf defaults + on-screen keyboard ────────
 # This block was MISSING from the installer path entirely. The image build
 # configured GNOME and the installer did not, so an install done from the ISO
@@ -183,6 +210,7 @@ if [ -d /usr/share/gnome-shell/extensions ]; then
 fi
 dconf update 2>/dev/null || true
 
+progress "5. display manager: GDM on Wayland (touch-first)"
 # ── 5. display manager: GDM on Wayland (touch-first) ───────────────────────
 log "gdm3"
 # See 03-configure.sh: `systemctl enable gdm3.service` is a no-op in trixie
@@ -210,11 +238,13 @@ systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
 systemctl enable getty@tty2.service 2>/dev/null || true
 
+progress "6. plymouth theme"
 # ── 6. plymouth theme ──────────────────────────────────────────────────────
 log "plymouth theme"
 cp -a /usr/share/plymouth/themes/spinner/spinner-*.png /usr/share/plymouth/themes/casper-splash/ 2>/dev/null || true
 plymouth-set-default-theme casper-splash 2>/dev/null || true
 
+progress "7. libinput quirk validation"
 # ── 7. libinput quirk validation ───────────────────────────────────────────
 if command -v libinput >/dev/null 2>&1; then
     libinput quirks validate >/dev/null 2>&1 \
@@ -222,6 +252,7 @@ if command -v libinput >/dev/null 2>&1; then
         || log "WARN: libinput quirk rejected"
 fi
 
+progress "8. fallback kernel: Ubuntu mainline 5.15.165"
 # ── 8. fallback kernel: Ubuntu mainline 5.15.165 ───────────────────────────
 # This whole section is best-effort: the 5.15 kernel is a *fallback*, and the
 # 6.12 kernel from Debian is the default. Losing it must never abort the
@@ -274,14 +305,20 @@ rm -rf /root/k515
 # module. depmod afterwards so the index matches the new filenames.
 if [ "$K515_OK" = 1 ] && find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print -quit 2>/dev/null | grep -q .; then
     log "compressing 5.15 modules"
+    # ~6000 .ko files. This is minutes of CPU on a 1-vCPU guest and produces no
+    # output, so it announces itself either side.
+    progress "compressing the 5.15 module tree (~6000 files, several minutes)"
     find /lib/modules/5.15.165-0515165-generic -name '*.ko' -print0 \
         | xargs -0 -r -n 64 -P "$(nproc 2>/dev/null || echo 2)" xz -9 --quiet 2>/dev/null || true
     depmod -a 5.15.165-0515165-generic 2>/dev/null || true
+    progress "regenerating the 5.15 initramfs"
     # The package postinst built an initrd from the uncompressed modules;
     # regenerate so it matches the compressed tree and the new depmod index.
     update-initramfs -u -k 5.15.165-0515165-generic 2>/dev/null || true
+    progress "5.15 kernel layer done"
 fi
 
+progress "9. GRUB: regenerate with our params, then per-kernel tweaks"
 # ── 9. GRUB: regenerate with our params, then per-kernel tweaks ────────────
 log "grub"
 update-grub
@@ -296,11 +333,13 @@ else
 fi
 grub-script-check /boot/grub/grub.cfg || log "WARN: grub.cfg failed validation"
 
+progress "10. fstab: tmpfs /tmp"
 # ── 10. fstab: tmpfs /tmp ──────────────────────────────────────────────────
 if ! grep -q "tmpfs /tmp" /etc/fstab 2>/dev/null; then
     echo "tmpfs /tmp tmpfs defaults,noatime,size=512M,mode=1777 0 0" >> /etc/fstab
 fi
 
+progress "11. services: enable / mask"
 # ── 11. services: enable / mask ────────────────────────────────────────────
 log "services"
 systemctl enable serial-getty@ttyS0.service 2>/dev/null || true
@@ -329,6 +368,7 @@ for svc in \
 done
 systemctl set-default graphical.target 2>/dev/null || true
 
+progress "12. misc cleanup + live sysctl"
 # ── 12. misc cleanup + live sysctl ─────────────────────────────────────────
 sysctl -p /etc/sysctl.d/99-casper-perf.conf >/dev/null 2>&1 || true
 rm -rf /root/.bash_history

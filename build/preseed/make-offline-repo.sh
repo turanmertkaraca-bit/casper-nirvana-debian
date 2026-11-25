@@ -34,7 +34,7 @@ command -v mmdebstrap >/dev/null || die "mmdebstrap required"
 command -v apt-ftparchive >/dev/null || die "apt-utils required (apt-ftparchive)"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/pool"
+mkdir -p "$OUT"
 
 WORK=/tmp/casper-offline-work
 rm -rf "$WORK"
@@ -83,43 +83,49 @@ EOF
 umount "$WORK/root/proc" 2>/dev/null || true
 
 # ── 2. collect the .debs ───────────────────────────────────────────────────
-info "collecting packages"
-find "$WORK/root" -name '*.deb' -type f | while IFS= read -r deb; do
-    cp -a "$deb" "$OUT/pool/"
-done
-# also take the apt cache, in case apt left some there instead
+# FLAT, with the .debs in the repository root. This matters: apt-ftparchive
+# writes `Filename:` relative to the directory it indexed, and the ISO build
+# copies the .debs to a flat /casperos-offline/. Indexing a `pool/`
+# subdirectory produced `Filename: pool/foo.deb` while the ISO had
+# `/casperos-offline/foo.deb` — so `apt-get update` succeeded, every package
+# download then 404'd, and the installer sat on an invisible error dialog.
+info "collecting packages (flat layout)"
+find "$WORK/root" -name '*.deb' -type f -exec cp -a {} "$OUT/" \; 2>/dev/null || true
 if [ -d "$WORK/root/var/cache/apt/archives" ]; then
-    find "$WORK/root/var/cache/apt/archives" -name '*.deb' -type f -exec cp -a {} "$OUT/pool/" \; 2>/dev/null || true
+    find "$WORK/root/var/cache/apt/archives" -name '*.deb' -type f \
+        -exec cp -a {} "$OUT/" \; 2>/dev/null || true
 fi
-count=$(find "$OUT/pool" -name '*.deb' -type f | wc -l)
+count=$(find "$OUT" -maxdepth 1 -name '*.deb' -type f | wc -l)
 ok "$count .deb files"
 [ "$count" -gt 100 ] || die "only $count packages collected — the closure did not resolve"
 
 # ── 3. index it with apt-ftparchive ────────────────────────────────────────
-# A flat repo (all .debs in one directory, Packages/Release at the root) is the
-# simplest form apt understands and needs no dists/ tree.
+# Index "." so `Filename:` is a bare basename, matching the flat tree that
+# ships on the ISO. A flat repo needs no dists/ tree.
 info "indexing the repository"
 cd "$OUT"
-cat > apt-ftparchive.conf <<'EOF'
-Dir {
-  ArchiveDir ".";
-};
-Default {
-  Packages::Compress ". gzip";
-  Release::Compress ". gzip";
-};
-TreeDefault {
-  Directory "pool";
-};
-EOF
-apt-ftparchive -c apt-ftparchive.conf packages pool > Packages
+apt-ftparchive packages . > Packages
 gzip -9c Packages > Packages.gz
-apt-ftparchive -c apt-ftparchive.conf release . > Release 2>/dev/null || \
-    apt-ftparchive release . > Release
+apt-ftparchive release . > Release 2>/dev/null || true
 # No Release.gpg: the ISO is local install media. The preseed points apt at it
-# with [trusted=yes] so no signature is needed, which is the same trust model
-# as the rest of the installer media.
-rm -f apt-ftparchive.conf
+# with [trusted=yes], the same trust model as any install CD.
+
+# ── 4. VERIFY the index actually resolves against the tree ─────────────────
+# The whole offline install depends on this agreeing with what ships. Checking
+# only that Packages *exists* is what let the pool/ mismatch through.
+info "verifying every Filename in the index exists"
+missing=0
+while IFS= read -r fn; do
+    [ -f "$OUT/$fn" ] || { echo "  MISSING: $fn" >&2; missing=$((missing+1)); }
+done < <(awk '/^Filename:/ {print $2}' Packages)
+if [ "$missing" -ne 0 ]; then
+    die "$missing packages listed in Packages do not exist in the repo — the ISO would ship a broken index"
+fi
+# And the reverse: a .deb that is not indexed is dead weight on the ISO.
+unindexed=$(comm -13 <(awk '/^Filename:/ {sub("./","",$2); print $2}' Packages | sort -u) \
+                     <(find "$OUT" -maxdepth 1 -name '*.deb' -printf '%f\n' | sort -u) | wc -l)
+[ "$unindexed" -eq 0 ] || echo "WARN: $unindexed .deb files on the repo are not in the index" >&2
+ok "index resolves: $count packages, 0 missing"
 
 ok "offline repo: $OUT ($count packages, $(du -sh "$OUT" | cut -f1))"
 ls -la "$OUT" | head

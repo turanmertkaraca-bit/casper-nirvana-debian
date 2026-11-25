@@ -162,39 +162,42 @@ jobs:
           } | tee /tmp/casper-offline-repo-size.txt >> "$GITHUB_STEP_SUMMARY"
         timeout-minutes: 40
 
-      - name: "Sanity: stock netinst boots in this QEMU setup?"
+      - name: "Sanity: does a stock Debian netinst kernel boot in this QEMU setup?"
         run: |
-          # boot the ORIGINAL ISO for ~70s; the Debian installer's console
-          # must appear (kernel messages + installer UI on the serial)
-          FCODE=$(find /usr/share/OVMF /tmp/ovmf-i32x -name 'OVMF32_CODE*.fd' 2>/dev/null | head -1)
-          [ -n "$FCODE" ] || { curl -fsSL -o /tmp/ovmf-ia32.deb http://deb.debian.org/debian/pool/main/e/edk2/ovmf-ia32_2022.11-6+deb12u2_all.deb; mkdir -p /tmp/ovmf-i32x && dpkg-deb -x /tmp/ovmf-ia32.deb /tmp/ovmf-i32x; FCODE=$(find /tmp/ovmf-i32x -name 'OVMF32_CODE*.fd' | head -1); }
-          cp -f /usr/share/OVMF/OVMF32_VARS_4M.fd /tmp/vars.fd 2>/dev/null || true
-          # resolve the current point release instead of hardcoding a version
+          # This checks the SAME boot path the installer test uses — direct
+          # -kernel/-initrd boot, no firmware — so a failure here means the
+          # harness is broken rather than the ISO. It previously booted the ISO
+          # through OVMF, a path the test never takes, and its verdict was a
+          # bare `grep ... && echo || echo` that exited 0 either way: it printed
+          # FAILED for two runs while the step stayed green. Now it gates.
           NB=https://cdimage.debian.org/debian-cd/current/amd64/iso-cd
           NN=$(curl -fsSL "$NB/SHA256SUMS" | awk '$2 ~ /-netinst\.iso$/ {print $2; exit}')
+          [ -n "$NN" ] || { printf '::error::sanity: could not resolve the current netinst name\n'; exit 1; }
           echo "current netinst: $NN"
           curl -fsSL --retry 3 -o /tmp/netinst-check.iso "$NB/$NN"
-          timeout 70 qemu-system-x86_64 \
-            -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
-            -cdrom /tmp/netinst-check.iso \
-            -netdev user,id=n1 -device e1000,netdev=n1 \
-            -drive if=pflash,format=raw,readonly=on,file="$FCODE" \
-            -drive if=pflash,format=raw,file=/tmp/vars.fd \
+          mkdir -p /tmp/nb-iso
+          mount -o loop,ro /tmp/netinst-check.iso /tmp/nb-iso || exit 1
+          cp /tmp/nb-iso/install.amd/vmlinuz /tmp/nb-vmlinuz
+          cp /tmp/nb-iso/install.amd/initrd.gz /tmp/nb-initrd.gz
+          umount /tmp/nb-iso
+          ls -la /tmp/nb-vmlinuz /tmp/nb-initrd.gz
+          # Same shape as installer-test.sh: -kernel/-initrd, serial to a file.
+          timeout 120 qemu-system-x86_64 \
+            -enable-kvm -machine q35 -m 2048 -smp 2 -cpu qemu64 \
+            -kernel /tmp/nb-vmlinuz -initrd /tmp/nb-initrd.gz \
+            -append "console=ttyS0,115200 DEBIAN_FRONTEND=text" \
             -serial file:/tmp/netinst-sanity.log \
             -display none -vga std -no-reboot >/dev/null 2>&1 || true
-          echo "--- stock netinst serial (first 30 lines):"
-          head -30 /tmp/netinst-sanity.log 2>/dev/null || true
-          if grep -aqE 'kernel|linux|Debian|install|debconf' /tmp/netinst-sanity.log; then
-            echo "STOCK NETINST BOOTS"
-            printf '::notice::sanity: stock netinst boots in this QEMU setup\n'
+          echo "--- stock netinst serial ($(stat -c %s /tmp/netinst-sanity.log 2>/dev/null || echo 0) bytes, first 20 lines):"
+          head -20 /tmp/netinst-sanity.log 2>/dev/null || true
+          if grep -aqE 'Linux version|Kernel command line|debian-installer' /tmp/netinst-sanity.log; then
+            echo "SANITY: a stock d-i kernel OS boots under this QEMU"
+            printf '::notice::sanity: stock d-i kernel boots under this QEMU setup\n'
           else
-            echo "STOCK NETINST FAILED TO BOOT"
-            tail -20 /tmp/netinst-sanity.log 2>/dev/null || true
-            # An unreachable sanity baseline makes every later installer failure
-            # ambiguous, so say so loudly instead of exiting 0 either way.
-            printf '::error::sanity: stock netinst did NOT boot — the installer test result is not meaningful\n'
+            echo "SANITY FAILED: no kernel output captured"
+            printf '::error::sanity: a stock d-i kernel does NOT boot under this QEMU setup — the installer test below cannot be trusted\n'
+            exit 1
           fi
-          # ~700 MB, used only by the 70s boot above
           rm -f /tmp/netinst-check.iso
 
       - name: "Test the installer (QEMU IA32, NO network: full auto-install + verify)"
@@ -212,6 +215,7 @@ jobs:
         with:
           name: casper-installer
           path: |
+            /tmp/installer-test/live-evidence.log
             /tmp/installer-test/verify.log
             /tmp/installer-test/serial-install.log
             /tmp/installer-test/qemu-install.log

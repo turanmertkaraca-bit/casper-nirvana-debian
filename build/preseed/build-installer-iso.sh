@@ -231,10 +231,11 @@ info "placing the offline repository on the ISO"
 OFFLINE_DIR="$WORK/iso/casperos-offline"
 rm -rf "$OFFLINE_DIR"
 mkdir -p "$OFFLINE_DIR"
-find "$OFFLINE/pool" -name '*.deb' -type f -exec cp -a {} "$OFFLINE_DIR/" \; 2>/dev/null || true
+find "$OFFLINE" -maxdepth 1 -name '*.deb' -type f -exec cp -a {} "$OFFLINE_DIR/" \; 2>/dev/null || true
 cp -a "$OFFLINE/Packages" "$OFFLINE_DIR/" 2>/dev/null || true
 cp -a "$OFFLINE/Packages.gz" "$OFFLINE_DIR/" 2>/dev/null || true
-ISO_DEBS=$(find "$OFFLINE_DIR" -name '*.deb' -type f | wc -l)
+cp -a "$OFFLINE/Release" "$OFFLINE_DIR/" 2>/dev/null || true
+ISO_DEBS=$(find "$OFFLINE_DIR" -maxdepth 1 -name '*.deb' -type f | wc -l)
 [ "$ISO_DEBS" -gt 100 ] || die "only $ISO_DEBS packages on the ISO — the offline repo did not copy"
 [ -f "$OFFLINE_DIR/Packages.gz" ] || [ -f "$OFFLINE_DIR/Packages" ] \
     || die "no Packages index in /casperos-offline — apt could not use the medium"
@@ -243,7 +244,17 @@ ISO_DEBS=$(find "$OFFLINE_DIR" -name '*.deb' -type f | wc -l)
 for poison in Packages Packages.gz; do
     [ -e "$WORK/iso/$poison" ] && die "/$poison at the ISO root would shadow the installer's own package index"
 done
-ok "offline repo on the ISO: $ISO_DEBS packages in /casperos-offline"
+# Resolve the index against the tree that actually ships. A stale
+# `Filename: pool/foo.deb` here means `apt-get update` still succeeds and every
+# install then fails with "File not found", on a machine with no network.
+iso_missing=0
+while IFS= read -r fn; do
+    case "$fn" in ./*) fn=${fn#./} ;; esac
+    [ -f "$OFFLINE_DIR/$fn" ] || { echo "  ISO MISSING: $fn" >&2; iso_missing=$((iso_missing+1)); }
+done < <(awk '/^Filename:/ {print $2}' "$OFFLINE_DIR/Packages")
+[ "$iso_missing" -eq 0 ] \
+    || die "$iso_missing filenames in the ISO's Packages index do not exist on the ISO"
+ok "offline repo on the ISO: $ISO_DEBS packages in /casperos-offline (index resolves)"
 
 
 # ── 7. 32-bit UEFI boot — the reason stock netinst won't start on this tablet ─
