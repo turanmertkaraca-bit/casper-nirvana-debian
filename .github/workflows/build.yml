@@ -58,16 +58,21 @@ jobs:
 
       - name: Compress and split for distribution
         run: |
+          set -x
           cd /tmp
           # The smoke test's copy of the image is a throwaway and is worth ~3 GB
           # of runner disk. Drop it before the compressor needs that space.
           rm -rf /tmp/casper-test/test.img
-          xz -6eT0 -c casper-n220.img > casper-n220.img.xz
+          df -h /tmp || true
+          ls -la /tmp/casper-n220.img || true
+          # -T0 asks xz to size its buffers from total cores, and on a runner it
+          # can exceed the default memory cap and exit immediately. Bound it.
+          xz -6e -T0 --memlimit-compress=4GiB -c casper-n220.img > casper-n220.img.xz
           # The raw image is not uploaded anywhere (only the .xz parts are),
           # and "Run summary" has already read its size. It is 6 GB of runner
           # disk that nothing below this line needs.
           rm -f casper-n220.img
-          # 6 GB image of which ~2.3 GB is data compresses to ~1.1 GB, i.e.
+          # 6 GB image of which ~2.5 GB is data compresses to ~1.1 GB, i.e.
           # below the 1900M split size, so split produces one part identical to
           # the .xz. Keep the stream form (the release flow and the flash-iso
           # job both cat the parts) but do not keep a second copy of it.
@@ -76,6 +81,7 @@ jobs:
           ls -la casper-n220.img.xz.*
           sha256sum casper-n220.img.xz.* > casper-n220.img.xz.sha256
           cat casper-n220.img.xz.sha256
+          df -h /tmp || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -191,11 +197,14 @@ jobs:
           # ~700 MB, used only by the 70s boot above
           rm -f /tmp/netinst-check.iso
 
-      - name: "Test the installer (QEMU IA32: full auto-install + verify)"
+      - name: "Test the installer (QEMU IA32, NO network: full auto-install + verify)"
         run: |
-          sudo bash build/test/installer-test.sh \
+          # The install must complete offline. The ISO carries the entire
+          # package closure, and installer-test.sh boots QEMU with -nic none,
+          # so a regression that reintroduces a download fails here.
+          sudo CASPER_INSTALL_TIMEOUT=3600 bash build/test/installer-test.sh \
             /tmp/casper-install.iso /tmp/installer-test
-        timeout-minutes: 140
+        timeout-minutes: 90
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

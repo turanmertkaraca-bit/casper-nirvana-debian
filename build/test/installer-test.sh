@@ -75,7 +75,11 @@ QPID=$!
 
 WAITED=0
 IDLE=0
-TIMEOUT=7200
+# A full offline install is a ~15 minute job (the closure is local, so there is
+# no download time). 7200s was chosen when the install had to pull ~2 GB over
+# the network and it made every failure cost two hours of CI. Override with
+# CASPER_INSTALL_TIMEOUT now that the package source is on the medium.
+TIMEOUT="${CASPER_INSTALL_TIMEOUT:-3600}"
 LAST_PROGRESS=""
 LAST_NOTICE=0
 PRESEED_SEEN=0
