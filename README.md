@@ -15,12 +15,17 @@ Everything is baked in — nothing runs after first boot:
 - **Dual kernel**: Debian 6.12 (default) + Ubuntu mainline **5.15.165**
   (fallback — the kernel known good on this device, with its correct legacy
   I2C parameters applied to that entry only).
-- **Landscape boot**: the panel is physically portrait, so the compositor
-  rotates it 90° (`monitor = …, transform, 1` in the Hyprland config) — the
-  setting you'd otherwise hunt for in a display panel that does not exist.
+- **Landscape boot**: the panel is physically portrait, so mutter rotates it
+  90° via `monitors.xml` — including GDM's own copy, so the login screen is
+  landscape too. This is the setting you'd otherwise hunt for in a display
+  panel that does not exist.
 - **User `lvy`** (no password), Turkey locale `tr_TR.UTF-8`, timezone
-  `Europe/Istanbul`, keyboard `tr`, **greetd autologin straight into
-  Hyprland**. No login screen, no password prompt, no GDM.
+  `Europe/Istanbul`, keyboard `tr`, **GDM → GNOME Shell on Wayland**, with the
+  on-screen keyboard enabled.
+- **Installs with no network at all**: the installer ISO carries a complete
+  apt repository of every package the image needs, plus the 5.15 kernel
+  packages. There is no mirror, no DHCP probe and no firmware download during
+  the install.
 - **Audio, working on first boot**: PipeWire 1.4 + WirePlumber 0.5 tuned for
   the RT5640 (2048-frame quantum, 48 kHz locked, PCM never suspended — that
   is the "first second of sound is missing" and the 5-second pop). The
@@ -58,52 +63,67 @@ Everything is baked in — nothing runs after first boot:
   Trail cannot hardware-decode; h264ify forces the H.264 stream the GPU
   actually decodes. Cap playback at ≤1080p/30fps.
 
-## The desktop: Hyprland + Caelestia shell
+## The desktop: GNOME on Wayland
 
-**GNOME is not on this image.** It was the single largest consumer of both
-image space and RAM, and this tablet runs exactly one session: greetd
-autologins, starts Hyprland, which starts the Caelestia shell. There is no
-login screen — user `lvy` never had a password anyway.
+GNOME is the session, launched by **GDM**. This was briefly replaced by
+Hyprland + Caelestia and that was reverted: Caelestia had to be compiled from
+source against a Qt it was not built for, needed a cmake/g++/Qt toolchain
+inside the image, and was **never once verified on the tablet**. GNOME is the
+session that was actually proven on this hardware, and it is the only one that
+gives the tablet an on-screen keyboard.
 
-What replaced it: `greetd` (a few hundred KB, no GTK) as the session launcher,
-`thunar` for files, `foot` for a terminal, `nmtui` for networks, and the
-Hyprland portal for screen sharing. Everything GNOME-specific — tracker, ibus,
-gnome-keyring, nautilus, gvfs's GNOME bits, the extension stack — is gone from
-the package list, not merely masked.
+- **One session, no fallback compositor.** GDM starts GNOME Shell on Wayland
+  for user `lvy`. If the shell ever fails, GDM still gives you a working login
+  screen (a frozen greeter is not the same failure as a dead bare compositor),
+  and `getty@tty2` is enabled as a text console — `Ctrl+Alt+F2`.
+- **On-screen keyboard works again.** `screen-keyboard-enabled=true` in
+  `/etc/dconf/db/local.d/00-casper-desktop`, with `ibus` installed. This is the
+  one thing the Caelestia experiment lost outright: typing a Wi-Fi password on
+  the tablet had become impossible without a USB keyboard.
+- **Landscape boot.** The panel is physically portrait, so mutter rotates it
+  90° via `monitors.xml`. It has to be present **three** times — for `lvy`, in
+  `/etc/skel`, and in `/var/lib/gdm3/.config` — because GDM reads its own copy:
+  miss that one and the *login screen* boots sideways even though the desktop
+  is correct.
+- **Touch-first defaults** in the same dconf file: 1.15 text scaling, hot
+  corners off, tap-to-click, natural scroll, and no idle-suspend on AC.
+- **Shell extensions** are enabled by discovering the UUIDs that actually got
+  installed, not by hardcoding names this Debian release may not ship.
 
-- **Hyprland 0.55 + Quickshell 0.3** come from `trixie-backports`, pinned at
-  priority 100 (`/etc/apt/preferences.d/99-casper-backports`) so `apt upgrade`
-  cannot drag libc/systemd forward with them.
-- **[caelestia-shell](https://github.com/caelestia-dots/shell) is built from
-  source at `v1.1.0`.** That pin is forced, not lazy: every release from
-  v1.2.0 onward hard-gates its CMake on Qt 6.9
-  (`qt_standard_project_setup(REQUIRES 6.9)`) and links libcava/aubio through
-  pkg-config. trixie has Qt 6.8.2 — and no Qt 6.9+ even in backports — and no
-  libcava development package at all, so those versions cannot be built here.
-  v1.1.0 is the last tag with neither requirement.
-- **Blur and animations are off** in `/etc/xdg/hypr/hyprland.conf`. On a 4-EU
-  Gen7 GPU they are the difference between usable and stuttering; the shell
-  still looks correct without them.
-- `/etc/casperos/hyprshell.status` records whether the shell compiled in this
-  build and which versions went in. If it starts with `failed:`, the session
-  still launches — you get bare Hyprland, and **Super+Return** opens `foot`.
+Also in the image: `nautilus` for files, `gnome-console`, `gnome-text-editor`,
+`gnome-keyring`, `iio-sensor-proxy` for rotation, the GNOME portal for screen
+sharing, and `network-manager-gnome` so Wi-Fi is configurable from the panel.
 
-Known gaps in this session, all real:
+Nothing is compiled from source. The whole desktop comes from trixie's own
+packages, which is what makes the fully offline ISO in the next section
+possible at all.
 
-- **No on-screen keyboard at all.** GNOME's OSK left with GNOME and nothing
-  replaces it yet, so typing a Wi-Fi password on the tablet itself needs a USB
-  keyboard until something like squeekboard is wired up.
-- **The shell is pointer-first** (`showOnHover`, drag thresholds, hover
-  popouts). Touch works at the compositor level — Hyprland 0.53+ fixed the
-  fullscreen touch bug — but Caelestia was not designed for a finger.
-- **v1.1.0 predates Quickshell 0.3**, so QML/API mismatches are possible. They
-  surface as errors inside the session, not at build time.
-- **None of this session has been verified on the tablet.** The build only
-  proves it compiles and installs. Because this is now the *only* session, a
-  compositor that cannot start means no GUI: greetd then drops to a shell on
-  VT1, and `Ctrl+Alt+F2` gives a console.
+Known gaps, all real:
+
+- **None of this session has been verified on the tablet.** The build proves it
+  installs and that GDM starts; the desktop rendering itself needs the real
+  i915 path.
+- **GNOME is heavy for 2 GB.** It was removed once for that reason. It is back
+  because "a desktop that was never verified" is a worse problem than "a
+  desktop that uses more RAM", and zram + earlyoom are configured to keep the
+  UI alive under load.
 
 ## Flashing / installing (no OS required — Ventoy USB stick)
+
+**The install needs no internet.** The ISO is self-contained: it carries a
+complete apt repository of every package the image installs (the exact
+dependency closure of `build/packages.list`), the two Ubuntu 5.15 kernel
+packages, the RTL8723BS Wi-Fi firmware and its Bluetooth firmware. `netcfg` is
+disabled in the preseed, so nothing probes the network, waits for DHCP or
+prompts for a mirror. You can install on a plane.
+
+Building that ISO **does** need a network (it resolves and downloads the
+closure) — see `build/preseed/make-offline-repo.sh`. That is the point: the
+work happens on the builder, not on the tablet.
+
+The KVM test enforces this: it boots the installer with `-nic none`, so a
+regression that reintroduces a download fails the test instead of quietly
+working on a runner with connectivity.
 
 Three ways, in order of preference:
 

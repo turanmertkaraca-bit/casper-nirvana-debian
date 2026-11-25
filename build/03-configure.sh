@@ -89,7 +89,7 @@ chmod 440 /etc/sudoers.d/90-casper-lvy
 # ensure our helper scripts are executable (dpkg/cp may have stripped modes)
 chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
          /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
-         /usr/local/bin/casper-nvram /usr/local/bin/casper-session 2>/dev/null || true
+         /usr/local/bin/casper-nvram 2>/dev/null || true
 
 # ── 5. firmware sanity ─────────────────────────────────────────────────────
 [ -f /lib/firmware/intel/fw_sst_0f28.bin ] \
@@ -134,28 +134,52 @@ id lvy >/dev/null 2>&1 || useradd -m -s /bin/bash -G audio,video,input,sudo,adm,
 # useradd leaves the password field unusable ("!") — make it a real null
 # password so login works with just Enter (PAM nullok default on Debian)
 passwd -d lvy
-mkdir -p /home/lvy/.config /etc/skel/.config
+mkdir -p /home/lvy/.config
+# The panel is physically portrait, so mutter has to rotate it 90`. This is
+# GNOME's own rotation config and it has to be present in three places: the
+# user, /etc/skel for future users, and GDM's home (the greeter reads its own
+# copy, so without it the LOGIN SCREEN boots sideways).
+cp -a "$B/configs/home/skel/.config/monitors.xml" /home/lvy/.config/monitors.xml
 chown -R lvy:lvy /home/lvy
-# No monitors.xml: that was mutter's rotation config. Rotation lives in
-# /etc/xdg/hypr/hyprland.conf now (monitor = , preferred, auto, 1, transform, 1),
-# and mutter's file is ignored by Hyprland.
+mkdir -p /etc/skel/.config
+cp -a "$B/configs/home/skel/.config/monitors.xml" /etc/skel/.config/monitors.xml
+mkdir -p /var/lib/gdm3/.config
+cp -a "$B/configs/home/skel/.config/monitors.xml" /var/lib/gdm3/.config/monitors.xml
+chown -R Debian-gdm:Debian-gdm /var/lib/gdm3/.config 2>/dev/null || true
 
-# ── 8. display manager: greetd, autologin straight into Hyprland ───────────
-# No greeter and no GNOME. The session itself is a static file in the config
-# tree (/etc/greetd/config.toml), so there is nothing to generate here — the
-# machine boots, greetd drops to lvy and starts the compositor.
-log "enabling greetd (autologin -> Hyprland)"
-systemctl enable greetd.service 2>/dev/null || true
-# nothing to disable: gdm3 is not installed in this image at all
-# greetd owns VT1. Debian enables getty@tty1 by default, and two things
-# fighting over one VT means greetd fails to take the console.
+# ── 8. dconf system defaults (UX + extensions + on-screen keyboard) ────────
+# screen-keyboard-enabled=true is what brings back the on-screen keyboard that
+# GNOME provides and that the Caelestia experiment lost. Discover the extension
+# UUIDs that actually got installed rather than hardcoding names that may not
+# exist in this release.
+log "compiling dconf system databases"
+{
+    echo "[org/gnome/shell]"
+    uuids=""
+    for d in /usr/share/gnome-shell/extensions/*/; do
+        [ -f "$d/metadata.json" ] || continue
+        u=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/metadata.json" | head -1 | sed 's/.*"uuid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+        [ -n "$u" ] || continue
+        uuids="$uuids,'$u'"
+    done
+    if [ -n "$uuids" ]; then
+        echo "enabled-extensions=[${uuids#,}]"
+    fi
+} > /etc/dconf/db/local.d/10-casper-extensions
+dconf update 2>/dev/null || true
+
+# ── 9. display manager: GDM on Wayland (touch-first) ───────────────────────
+log "enabling gdm3 (GNOME session)"
+systemctl enable gdm3.service 2>/dev/null || true
+# GDM owns the VT it starts on; getty@tty1 would fight it for the console.
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
-# Text console as the recovery path: with no login screen left, this is the
-# only way back in if the compositor refuses to start on the GPU.
+# Recovery console. GNOME is the only session, so this is the way back in if
+# the shell ever fails to start.
 systemctl enable getty@tty2.service 2>/dev/null || true
+systemctl set-default graphical.target 2>/dev/null || true
 
-# ── 9. plymouth splash theme ───────────────────────────────────────────────
+# ── 10. plymouth splash theme ──────────────────────────────────────────────
 log "setting plymouth theme: casper-splash"
 cp -a /usr/share/plymouth/themes/spinner/spinner-*.png /usr/share/plymouth/themes/casper-splash/ 2>/dev/null || true
 plymouth-set-default-theme casper-splash 2>/dev/null || true
@@ -247,13 +271,8 @@ fi
 [ -f /etc/firefox-esr/policies.json ] || [ -f /usr/lib/firefox-esr/distribution/policies.json ] \
     || echo "WARN: firefox policies.json missing" >> "$REPORT"
 
-# ── 12b. optional Hyprland + Caelestia shell layer ────────────────────────
-# Best-effort: writes to report.txt and never fails the build, so a shell that
-# does not compile still leaves a bootable system (greetd falls back to a
-# shell on VT1, and getty@tty2 is always available).
-log "installing Hyprland + Caelestia shell layer (experimental)"
-bash "$B/hypr/install-hyprshell.sh" || echo "WARN: hyprshell layer failed" >> "$REPORT"
-
-# ── 13. sizes for the run report ───────────────────────────────────────────
+# ── 12. sizes for the run report ───────────────────────────────────────────
+# (There is no longer a build-from-source desktop layer: GNOME comes straight
+# from the package set, so nothing here compiles anything.)
 du -sx --exclude=build / 2>/dev/null | awk '{printf "IMAGE_ROOTFS_BYTES=%d\n", $1*1024}' >> "$REPORT" || true
 log "configuration complete"

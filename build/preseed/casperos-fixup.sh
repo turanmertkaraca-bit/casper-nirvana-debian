@@ -61,28 +61,53 @@ EOF
 mkdir -p /etc/dpkg/dpkg.cfg.d
 cp -a "$CR/etc/dpkg/dpkg.cfg.d/10-casper" /etc/dpkg/dpkg.cfg.d/
 
-# Ensure non-free-firmware is enabled for the base install to keep working.
-# This has to cope with BOTH layouts: d-i's apt-setup writes a one-line
-# /etc/apt/sources.list (`deb http://... trixie main...`), while this repo's
-# own image build writes deb822 .sources files. The old code only looked at
-# .sources: with an empty sources.list.d/ the glob did not expand, sed got a
-# literal `*.sources` path, exited 2, and — being the last command of the `||`
-# list under `set -e` — killed the whole fixup right here. On every real
-# installer run that skipped the config tree, lvy, greetd, the 5.15 kernel,
-# GRUB, fstab and all the services, while d-i still reported success.
-if [ -f /etc/apt/sources.list ]; then
-    sed -i -E 's/^(deb[[:space:]].*[[:space:]]main)([[:space:]]|$)/\1 contrib non-free non-free-firmware\2/' \
-        /etc/apt/sources.list 2>/dev/null || true
-fi
-for s in /etc/apt/sources.list.d/*.sources; do
-    [ -e "$s" ] || continue
-    grep -q 'non-free-firmware' "$s" 2>/dev/null && continue
-    sed -i '/^Components:/s/$/ contrib non-free non-free-firmware/' "$s" 2>/dev/null || true
+# ── point apt at the repository that is ON THE INSTALL MEDIUM ──────────────
+# The install must not need the network. The ISO carries a flat apt repository
+# ("casperos-offline") holding the exact closure of packages.list, so this
+# replaces whatever d-i wrote instead of trying to reach deb.debian.org.
+#
+# [trusted=yes] because the repo is unsigned local media: there is no key to
+# distribute, and the ISO itself is the trust boundary — the same model as any
+# Debian install CD. `file:` keeps apt away from any proxy/DNS path.
+OFFLINE_REPO=""
+for cand in /media/cdrom /cdrom /media/cdrom0; do
+    if [ -f "$cand/Packages.gz" ] || [ -f "$cand/Packages" ]; then
+        OFFLINE_REPO="$cand"
+        break
+    fi
 done
+
+if [ -n "$OFFLINE_REPO" ]; then
+    log "using the offline repository on the install medium: $OFFLINE_REPO"
+    rm -f /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+    printf 'deb [trusted=yes] file:%s ./\n' "$OFFLINE_REPO" > /etc/apt/sources.list
+else
+    # No medium found: fall back to the network rather than fail, but say so
+    # loudly — this is the only path that can still need Wi-Fi.
+    log "WARN: offline repository not found on the install medium — falling back to the network"
+    # d-i's apt-setup writes a one-line /etc/apt/sources.list and this repo's
+    # own image build writes deb822 .sources; handle both. (With an empty
+    # sources.list.d/ the old code passed a literal glob to sed, which exited 2
+    # and killed the fixup under set -e.)
+    if [ -f /etc/apt/sources.list ]; then
+        sed -i -E 's/^(deb[[:space:]].*[[:space:]]main)([[:space:]]|$)/\1 contrib non-free non-free-firmware\2/' \
+            /etc/apt/sources.list 2>/dev/null || true
+    fi
+    for s in /etc/apt/sources.list.d/*.sources; do
+        [ -e "$s" ] || continue
+        grep -q 'non-free-firmware' "$s" 2>/dev/null && continue
+        sed -i '/^Components:/s/$/ contrib non-free non-free-firmware/' "$s" 2>/dev/null || true
+    done
+fi
 
 log "apt update + installing package set (long)"
 apt-get update -qq
-apt-get install -y -qq --no-install-recommends $(grep -v '^#' "$B_LIST" | grep -v '^$')
+# The package set is installed from the medium when available. Anything the
+# offline repo happens to lack still resolves from the mirror if there is one.
+apt-get install -y -qq --no-install-recommends $(grep -v '^#' "$B_LIST" | grep -v '^$') || {
+    log "ERROR: package set install failed"
+    exit 1
+}
 
 # ── 2. static configuration tree ───────────────────────────────────────────
 log "applying configuration tree"
@@ -96,7 +121,7 @@ rm -rf /etc/initramfs-tools/initramfs.conf.d
 chmod 440 /etc/sudoers.d/90-casper-lvy
 chmod +x /usr/local/bin/touchscreen-reset /usr/local/bin/touchscreen-watchdog \
          /usr/local/bin/casper-set-governor /usr/local/bin/casper-growroot \
-         /usr/local/bin/casper-nvram /usr/local/bin/casper-session 2>/dev/null || true
+         /usr/local/bin/casper-nvram 2>/dev/null || true
 
 # ── 3. user lvy: drop the placeholder preseed password ─────────────────────
 log "fixing user lvy (null password)"
@@ -110,13 +135,52 @@ log "locale/keyboard"
 update-locale LANG=tr_TR.UTF-8 LANGUAGE=tr:en 2>/dev/null || true
 setupcon --save 2>/dev/null || true
 
-# ── 5. display manager: greetd (autologin -> Hyprland, no greeter, no GNOME) ─
-log "greetd"
-systemctl enable greetd.service 2>/dev/null || true
-# greetd owns VT1; getty@tty1 would fight it for the console
+# ── 4b. GNOME: panel rotation + dconf defaults + on-screen keyboard ────────
+# This block was MISSING from the installer path entirely. The image build
+# configured GNOME and the installer did not, so an install done from the ISO
+# produced a system with no rotation (sideways desktop), no dconf defaults and
+# no on-screen keyboard. The two code paths have to agree.
+log "GNOME rotation + dconf defaults"
+MON="$CR/home/skel/.config/monitors.xml"
+if [ -f "$MON" ]; then
+    mkdir -p /home/lvy/.config
+    cp -a "$MON" /home/lvy/.config/monitors.xml
+    chown -R lvy:lvy /home/lvy 2>/dev/null || true
+    mkdir -p /etc/skel/.config
+    cp -a "$MON" /etc/skel/.config/monitors.xml
+    # GDM reads its own copy; without it the LOGIN SCREEN boots sideways.
+    mkdir -p /var/lib/gdm3/.config
+    cp -a "$MON" /var/lib/gdm3/.config/monitors.xml
+    chown -R Debian-gdm:Debian-gdm /var/lib/gdm3/.config 2>/dev/null || true
+else
+    log "WARN: monitors.xml missing from the payload — display will not rotate"
+fi
+# Enable whichever shell extensions actually got installed, rather than naming
+# ones this Debian release may not ship.
+if [ -d /usr/share/gnome-shell/extensions ]; then
+    {
+        echo "[org/gnome/shell]"
+        uuids=""
+        for d in /usr/share/gnome-shell/extensions/*/; do
+            [ -f "$d/metadata.json" ] || continue
+            u=$(grep -o '"uuid"[[:space:]]*:[[:space:]]*"[^"]*"' "$d/metadata.json" | head -1 \
+                | sed 's/.*"uuid"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+            [ -n "$u" ] || continue
+            uuids="$uuids,'$u'"
+        done
+        [ -n "$uuids" ] && echo "enabled-extensions=[${uuids#,}]"
+    } > /etc/dconf/db/local.d/10-casper-extensions
+fi
+dconf update 2>/dev/null || true
+
+# ── 5. display manager: GDM on Wayland (touch-first) ───────────────────────
+log "gdm3"
+systemctl enable gdm3.service 2>/dev/null || true
+# GDM owns the VT it starts on; getty@tty1 would fight it for the console.
 systemctl disable getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service 2>/dev/null || true
 systemctl enable getty@tty2.service 2>/dev/null || true
+systemctl set-default graphical.target 2>/dev/null || true
 
 # ── 6. plymouth theme ──────────────────────────────────────────────────────
 log "plymouth theme"
@@ -141,12 +205,21 @@ K515_OK=1
 for f in \
     linux-image-unsigned-5.15.165-0515165-generic_5.15.165-0515165.202408190457_amd64.deb \
     linux-modules-5.15.165-0515165-generic_5.15.165-0515165.202408190457_amd64.deb; do
-    # `A || B` takes B's status, so an unreachable kernel.ubuntu.com (curl -f
-    # exits 22 on a 404) used to kill the whole fixup here.
-    [ -f "$f" ] || curl -fsSL -O "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/$f" || {
-        log "WARN: could not download $f — no 5.15 fallback kernel"
-        K515_OK=0
-    }
+    # The .debs are BAKED ONTO THE ISO (build/preseed/build-installer-iso.sh
+    # puts them in /casperos/k515), so this never needs the network. Curling
+    # kernel.ubuntu.com mid-install was both a hang risk and a hard dependency
+    # on a third-party host being up.
+    if [ ! -f "$f" ] && [ -f "$B/k515/$f" ]; then
+        cp -a "$B/k515/$f" .
+    fi
+    if [ ! -f "$f" ]; then
+        # Last resort only, and never fatal: a flaky network must not abort the
+        # fixup (see the note in 03-configure.sh about `A || B` status).
+        curl -fsSL --max-time 180 -O "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/$f" || {
+            log "WARN: $f is neither on the ISO nor downloadable — no 5.15 fallback kernel"
+            K515_OK=0
+        }
+    fi
 done
 # `dpkg -i *.deb` with an unexpanded glob passes the literal string '*.deb'
 # and exits 2 — same defect class as the unexpanded sed above, and equally

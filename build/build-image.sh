@@ -4,7 +4,7 @@
 #  Produces a dd-able raw disk image for the Casper Nirvana N220 / N240:
 #    - Debian 13 trixie, amd64 userland, 32-bit UEFI bootloader (Bay Trail)
 #    - Dual kernel: Debian 6.12 (default) + Ubuntu mainline 5.15.165 (fallback)
-#    - User "lvy" (no password), Turkey locale, Hyprland session, pre-tuned
+#    - User "lvy" (no password), Turkey locale, GNOME session, pre-tuned
 #  Requires: root, ~12 GB free disk, network. Tested on Debian/Ubuntu hosts.
 #  Usage: sudo ./build-image.sh [--root DIR] [--img FILE] [--size 6G]
 # ═══════════════════════════════════════════════════════════════════════════
@@ -84,14 +84,14 @@ run_stage 3 "$SRC/04-assemble.sh"  --root "$ROOT" --img "$IMG" --build "$SRC"
 run_stage 4 "$SRC/05-finalize.sh"  --root "$ROOT" --img "$IMG"
 
 # ── surface the report ─────────────────────────────────────────────────────
-# report.txt and the hypr layer's status only exist inside the artifact (or
-# inside the image), so a build that "succeeds" while half its soft-failing
-# steps did not run looks identical to a healthy one. Echo the lines that
-# matter as annotations, which are readable without downloading anything.
+# report.txt only exists inside the artifact (or inside the image), so a build
+# that "succeeds" while half its soft-failing steps did not run looks identical
+# to a healthy one. Echo the lines that matter as annotations, which are
+# readable without downloading anything.
 REPORT_FILE="$(dirname "$IMG")/casper-build-report.txt"
 if [ -f "$REPORT_FILE" ]; then
     info "build report: $REPORT_FILE"
-    grep -E '^(WARN|FATAL|HYPR)' "$REPORT_FILE" 2>/dev/null | head -12 | \
+    grep -E '^(WARN|FATAL)' "$REPORT_FILE" 2>/dev/null | head -12 | \
         while IFS= read -r line; do printf '::warning::%s\n' "$line" >&2; done || true
     # size and space breakdown go out as notices: a separate quota from
     # warnings, so the numbers survive even when warnings are exhausted
@@ -100,10 +100,7 @@ if [ -f "$REPORT_FILE" ]; then
 else
     printf '::warning::no build report at %s\n' "$REPORT_FILE" >&2
 fi
-if [ -f "$ROOT/etc/casperos/hyprshell.status" ]; then
-    printf '::warning::hyprshell: %s\n' \
-        "$(tr '\n' ' ' < "$ROOT/etc/casperos/hyprshell.status" | cut -c1-200)" >&2
-fi
+
 
 ok "BUILD COMPLETE → ${IMG}"
 info "report: $REPORT_FILE"

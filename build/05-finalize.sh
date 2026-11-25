@@ -28,12 +28,18 @@ rm -rf "$ROOT/tmp/"* 2>/dev/null || true
 
 # ── initramfs gate: an initrd that cannot see the eMMC does not boot ──────
 # MODULES=dep resolves the *build host's* storage driver (it reads the running
-# /proc/mounts and /sys), so this image's initrds must contain the tablet's MMC
+# /proc/mounts and /sys), so this image's initrds must carry the tablet's MMC
 # stack. Nothing else in the build would notice if they did not — the failure
 # is a kernel panic on the tablet, hours after a green build. lsinitramfs is
 # the only check that sees inside the image. Runs before the zero-fill so a
 # refused image does not cost the full write of the filesystem.
-info "verifying the initrds contain the tablet's storage stack"
+#
+# NOTE: Debian's amd64 kernel builds the MMC/SDHCI stack as modules (=m), so
+# for the 6.12 initrd these really are .ko files under
+# usr/lib/modules/<ver>/kernel/drivers/mmc/. Ubuntu's mainline 5.15 builds
+# ext4/jbd2 in (=y) — those legitimately have no .ko and are satisfied via
+# modules.builtin. A genuine breakage is "neither a module nor builtin".
+info "verifying the initrds can mount the tablet's eMMC root"
 INITRD_FAIL=0
 for initrd in "$ROOT"/boot/initrd.img-*; do
     [ -f "$initrd" ] || continue
@@ -42,19 +48,63 @@ for initrd in "$ROOT"/boot/initrd.img-*; do
         echo "WARN: could not read $name with lsinitramfs — skipping its check" >&2
         continue
     fi
+    # A driver is usable if it is EITHER a module file in the initrd OR built
+    # into that kernel. Two traps this avoids:
+    #
+    #  1. The .ko FILE name is the kernel Makefile's obj-m name, which is not
+    #     always the module name: drivers/mmc/host/Makefile has
+    #     `obj-$(CONFIG_MMC_SDHCI_PCI) += sdhci-pci.o`, so the file is
+    #     sdhci-pci.ko.xz while `modprobe sdhci_pci` is what you type. Matching
+    #     only the underscore spelling reports every hyphenated driver missing.
+    #  2. Built-in drivers have no .ko at all. mkinitramfs copies the kernel's
+    #     modules.builtin into the initrd, so consult that too: Debian's amd64
+    #     kernel has IOSF_MBI=y (builtin), and a config like that is correct,
+    #     not broken.
+    #
+    # modules.builtin is read from the initrd itself rather than /boot so the
+    # check stays valid for a kernel whose /lib/modules is not the running one.
+    builtin=""
+    exdir=""
+    builtin_rel=$(printf '%s\n' "$listing" | grep -E '(^|/)modules\.builtin$' | head -1 || true)
+    if [ -n "$builtin_rel" ] && command -v unmkinitramfs >/dev/null 2>&1; then
+        exdir=$(mktemp -d) || die "mktemp failed"
+        if unmkinitramfs "$initrd" "$exdir" >/dev/null 2>&1; then
+            if [ -f "$exdir/${builtin_rel#/}" ]; then
+                builtin="$exdir/${builtin_rel#/}"
+            fi
+        fi
+    fi
+
     missing=""
-    for mod in ext4 mmc_block sdhci sdhci_pci; do
-        # modules are stored compressed (zstd/gzip/xz), so match the basename
-        printf '%s\n' "$listing" | grep -qE "(^|/)${mod}\.ko(\.(xz|gz|zst))?$" \
-            || missing="$missing $mod"
+    for mod in ext4 mmc_block sdhci sdhci_pci sdhci_acpi; do
+        # Try both spellings: the module name (sdhci_pci) and the kernel's
+        # object name (sdhci-pci), because they differ for these drivers.
+        found=0
+        for fname in "$mod" "${mod//_/-}"; do
+            # modules are stored compressed (zstd/gzip/xz) — match the basename
+            if grep -qE "(^|/)${fname//./\\.}\.ko(\.(xz|gz|zst))?$" <<<"$listing"; then
+                found=1; break
+            fi
+        done
+        if [ "$found" = 0 ] && [ -n "$builtin" ]; then
+            for fname in "$mod" "${mod//_/-}"; do
+                if grep -qE "/${fname//./\\.}\.ko$" "$builtin"; then
+                    found=1; break
+                fi
+            done
+        fi
+        [ "$found" = 1 ] || missing="$missing $mod"
     done
+
     if [ -n "$missing" ]; then
-        printf '::error::%s is missing modules:%s — the tablet would not mount root\n' "$name" "$missing" >&2
+        printf '::error::%s cannot load:%s — the tablet would not mount root\n' "$name" "$missing" >&2
         echo "FATAL: $name lacks:$missing" >&2
         INITRD_FAIL=1
     else
-        ok "$name contains ext4 + mmc_block + sdhci + sdhci_pci"
+        ok "$name can mount the eMMC root (ext4 + sdhci/mmc_block present as module or builtin)"
     fi
+    if [ -n "$exdir" ]; then rm -rf "$exdir"; fi
+    exdir=""
 done
 [ "$INITRD_FAIL" = 0 ] || die "an initramfs cannot mount the eMMC root — refusing to ship this image"
 

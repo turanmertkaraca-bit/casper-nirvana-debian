@@ -18,6 +18,7 @@ done
 
 info() { echo -e "\033[1;36m→\033[0m $*"; }
 ok()   { echo -e "\033[1;32m✓\033[0m $*"; }
+die()  { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
 
 WORK=/tmp/casper-installer
 rm -rf "$WORK" && mkdir -p "$WORK/iso" "$WORK/payload/casperos"
@@ -60,6 +61,52 @@ cp -a "$SRC/build/configs" "$P/configs"
 cp -a "$SRC/build/packages.list" "$P/"
 cp -a "$SRC/build/tools/grub-casper-postprocess.sh" "$P/"
 chmod +x "$P/casperos-fixup.sh" "$P/grub-casper-postprocess.sh"
+
+# ── 3b. the 5.15 fallback kernel, baked in ─────────────────────────────────
+# The fixup needs two Ubuntu mainline .debs. Fetching them during the install
+# was a hard dependency on kernel.ubuntu.com being reachable — on a tablet with
+# an RTL8723BS and no cable, that is exactly what fails. They go onto the ISO,
+# pinned by sha256 (from that directory's CHECKSUMS) so a re-tagged or
+# corrupted artifact cannot silently end up in the image.
+K515_DIR="$P/k515"
+mkdir -p "$K515_DIR"
+info "fetching the 5.15 fallback kernel packages (baked onto the ISO)"
+K515_SUMS=$(curl -fsSL --retry 3 \
+    "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/CHECKSUMS" 2>/dev/null | \
+    sed -n '/Checksums-Sha256:/,$p' | awk 'NF==2 && $2 ~ /\.deb$/ {print $1" "$2}')
+[ -n "$K515_SUMS" ] || die "could not fetch the 5.15 kernel CHECKSUMS"
+for f in \
+    "linux-image-unsigned-5.15.165-0515165-generic_5.15.165-0515165.202408190457_amd64.deb" \
+    "linux-modules-5.15.165-0515165-generic_5.15.165-0515165.202408190457_amd64.deb"; do
+    want=$(printf '%s\n' "$K515_SUMS" | awk -v n="$f" '$2 == n {print $1; exit}')
+    [ -n "$want" ] || die "no sha256 listed for $f"
+    if [ -s "$K515_DIR/$f" ] && [ "$(sha256sum "$K515_DIR/$f" | cut -d' ' -f1)" = "$want" ]; then
+        ok "already present and verified: $f"
+        continue
+    fi
+    curl -fsSL --retry 3 -o "$K515_DIR/$f" \
+        "https://kernel.ubuntu.com/mainline/v5.15.165/amd64/$f" \
+        || die "could not fetch $f for the ISO"
+    got=$(sha256sum "$K515_DIR/$f" | cut -d' ' -f1)
+    [ "$got" = "$want" ] || die "sha256 mismatch for $f (got $got, want $want)"
+    ok "bundled $(basename "$f") ($(stat -c %s "$K515_DIR/$f") bytes, sha256 verified)"
+done
+
+# ── 3c. the offline package repository, baked in ───────────────────────────
+# This is what makes the whole install work with no network at all. Building it
+# needs a network (it resolves and downloads the closure), which is why it
+# happens HERE, on the build machine, and not on the tablet.
+OFFLINE="$WORK/payload/offline"
+if [ -f "$OFFLINE/Packages.gz" ] || [ -f "$OFFLINE/Packages" ]; then
+    ok "using prebuilt offline repository at $OFFLINE"
+else
+    info "building the offline package repository (long — resolves the full closure)"
+    bash "$SRC/build/preseed/make-offline-repo.sh" "$OFFLINE" \
+        || die "could not build the offline package repository"
+fi
+[ -f "$OFFLINE/Packages.gz" ] || [ -f "$OFFLINE/Packages" ] \
+    || die "offline repository has no Packages index"
+ok "offline repository: $(find "$OFFLINE" -name '*.deb' | wc -l) packages, $(du -sh "$OFFLINE" | cut -f1)"
 
 # ── 4. bundle RTL8723BS firmware + preseed + fix payload INTO the initrd ───
 # (the initrd is always available — no /cdrom mount dependency for preseed)
@@ -169,7 +216,22 @@ done
 cp -a "$SRC/build/preseed/preseed.cfg" "$WORK/iso/preseed.cfg"
 cp -a "$WORK/payload/casperos" "$WORK/iso/casperos"
 
-die() { echo -e "\033[1;31m✗\033[0m $*" >&2; exit 1; }
+# The offline apt repository goes at the ISO ROOT, because that is what gets
+# mounted at /media/cdrom during the install — a flat repo with Packages at its
+# top level. This is the whole point: after this, `apt-get install` inside the
+# target needs no network.
+info "placing the offline repository on the ISO"
+mkdir -p "$WORK/iso/pool"
+find "$OFFLINE/pool" -name '*.deb' -type f -exec cp -a {} "$WORK/iso/pool/" \; 2>/dev/null || true
+cp -a "$OFFLINE/Packages" "$WORK/iso/" 2>/dev/null || true
+cp -a "$OFFLINE/Packages.gz" "$WORK/iso/" 2>/dev/null || true
+cp -a "$OFFLINE/Release" "$WORK/iso/" 2>/dev/null || true
+ISO_DEBS=$(find "$WORK/iso/pool" -name '*.deb' -type f | wc -l)
+[ "$ISO_DEBS" -gt 100 ] || die "only $ISO_DEBS packages on the ISO — the offline repo did not copy"
+[ -f "$WORK/iso/Packages.gz" ] || [ -f "$WORK/iso/Packages" ] \
+    || die "no Packages index at the ISO root — apt could not use the medium"
+ok "offline repo on the ISO: $ISO_DEBS packages"
+
 
 # ── 7. 32-bit UEFI boot — the reason stock netinst won't start on this tablet ─
 # Debian's amd64 netinst ships ONLY EFI/BOOT/BOOTX64.EFI. Bay Trail firmware is

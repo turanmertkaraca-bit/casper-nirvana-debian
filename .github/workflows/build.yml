@@ -8,6 +8,11 @@ on:
     branches: [ main ]
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      upload_iso:
+        description: 'Keep the ~1.8 GB installer ISO as a downloadable artifact'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -128,11 +133,27 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             xorriso isolinux cpio gzip xz-utils qemu-system-x86 qemu-utils ovmf curl \
-            grub-efi-ia32-bin grub-efi-amd64-bin grub-pc-bin dosfstools mtools file
+            grub-efi-ia32-bin grub-efi-amd64-bin grub-pc-bin dosfstools mtools file \
+            mmdebstrap debootstrap debian-archive-keyring apt-utils
 
-      - name: Build the CasperOS installer ISO (preseeded netinst)
+      - name: Build the CasperOS installer ISO (preseeded netinst, offline repo)
         run: |
+          # Builds the offline apt repository into the ISO, so the install
+          # itself needs no network. Needs a network HERE (build time), which
+          # is exactly the point: the tablet does not.
           sudo bash build/preseed/build-installer-iso.sh /tmp/casper-install.iso
+          # Report the size so the storage cost is visible per run instead of
+          # only when someone runs out of disk.
+          {
+            echo "## CasperOS installer ISO"
+            echo ""
+            echo "ISO: $(numfmt --to=iec-i "$(stat -c %s /tmp/casper-install.iso)")"
+            echo ""
+            echo "| part | size |"
+            echo "|---|---|"
+            echo "| offline repo (.deb) | $(du -sh /tmp/casper-installer/payload/offline 2>/dev/null | cut -f1) |"
+            echo "| 5.15 kernel debs | $(du -sh /tmp/casper-installer/payload/casperos/k515 2>/dev/null | cut -f1) |"
+          } | tee /tmp/casper-offline-repo-size.txt >> "$GITHUB_STEP_SUMMARY"
         timeout-minutes: 40
 
       - name: "Sanity: stock netinst boots in this QEMU setup?"
@@ -182,11 +203,25 @@ jobs:
         with:
           name: casper-installer
           path: |
-            /tmp/casper-install.iso
             /tmp/installer-test/verify.log
             /tmp/installer-test/serial-install.log
             /tmp/installer-test/qemu-install.log
+            /tmp/casper-offline-repo-size.txt
           retention-days: 30
+
+      # The ISO is ~1.8 GB now that it carries the offline package repository,
+      # and it is rebuilt from scratch every run. Uploading it on every push
+      # would double that on the runner AND keep 1.8 GB of artifacts for 30
+      # days per run, which is what made a single run cost tens of gigabytes.
+      # Release tags still get it (the step below), and so does anyone who
+      # asks for it by dispatching the workflow with upload_iso=true.
+      - name: Upload the installer ISO (tags and on request only)
+        uses: actions/upload-artifact@v4
+        if: always() && (startsWith(github.ref, 'refs/tags/') || inputs.upload_iso)
+        with:
+          name: casper-install-iso
+          path: /tmp/casper-install.iso
+          retention-days: 7
 
       - name: Attach to release (on tag)
         if: startsWith(github.ref, 'refs/tags/')

@@ -4,8 +4,10 @@
 # this, adding the backports suite would let apt pull newer libc, systemd and
 # i915-era userspace into a stable image on the next `apt upgrade`.
 #
-# The Hyprland / Quickshell stack is installed with an explicit
-# `-t trixie-backports`, which overrides this pin for exactly those packages.
+# Nothing in the image needs backports any more: the GNOME desktop comes from
+# trixie itself. The pin stays so that a backports entry appearing in a source
+# list can never silently upgrade the base system, and so anyone who enables
+# trixie-backports later (for a newer kernel, say) gets the safe behaviour.
 Package: *
 Pin: release n=trixie-backports
 Pin-Priority: 100

@@ -47,30 +47,27 @@ echo "(preseed.cfg present in the booted initrd: $?)"
 
 # ── phase 1: run the installer (preseeded, automatic; BIOS machine) ─────────
 echo "=== phase 1: installing (this takes a while) ==="
-# The installer ships its syslog to the qemu host (10.0.2.2) via UDP 514 —
-# this is how we see the preseed/installer internals (they don't hit the
-# serial). The syslog's md5 also gives us a reliable progress signal.
-(nc -u -l -p 514 > "$OUT/installer-syslog.log" 2>/dev/null || \
- python3 -c "
-import socket
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.bind(('0.0.0.0', 514))   # 10.0.2.2 exists only inside qemu's user-net
-with open('$OUT/installer-syslog.log','ab') as f:
-    while True:
-        d, _ = s.recvfrom(65535)
-        if not d: break
-        f.write(d + b'\n')
-        f.flush()
-") &
-SYSLOG_PID=$!
+# No UDP syslog listener any more: the VM has no network at all (see -nic none
+# below), so nothing could reach 10.0.2.2. The evidence is the serial console
+# plus the fixup's sentinel file on the installed disk.
+# SYSLOG_PID is kept defined so the cleanup traps stay valid.
+: > "$OUT/installer-syslog.log"
+SYSLOG_PID=0
 
+# The VM has NO network on purpose. The ISO is self-contained (offline apt
+# repository + the 5.15 kernel debs are baked in), so a successful install here
+# proves the tablet will not need Wi-Fi either. `-nic none` is a hard
+# guarantee: if anything in the install still tries to reach the network, it
+# fails visibly instead of quietly succeeding on the runner's connectivity.
+# (The remote syslog then has no path either, so the serial log and the
+# fixup's own sentinel file on disk are the evidence.)
 qemu-system-x86_64 \
     -enable-kvm -machine q35 -m 2048 -cpu qemu64 \
     -cdrom "$ISO" \
     -drive file="$OUT/target.disk",format=raw,if=ide \
-    -netdev user,id=n1 -device e1000,netdev=n1 \
+    -nic none \
     -kernel "$OUT/vmlinuz" -initrd "$OUT/initrd.gz" \
-    -append "auto=true priority=critical preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 DEBIAN_FRONTEND=text log_host=10.0.2.2 log_port=514" \
+    -append "auto=true priority=critical preseed/file=/preseed.cfg console=tty0 console=ttyS0,115200 DEBIAN_FRONTEND=text" \
     -serial file:"$OUT/serial-install.log" \
     -display none -vga std -no-reboot \
     > "$OUT/qemu-install.log" 2>&1 &
@@ -91,18 +88,18 @@ while kill -0 "$QPID" 2>/dev/null; do
     # iteration and the stall detector could never fire. That is why run #128
     # sat at exactly 7200s instead of failing fast. Progress is now measured by
     # *semantic* counters that only advance when the installer really does
-    # something: the byte count of the remote syslog, and the number of lines
-    # in the serial log that name an actual install stage. A spinning cursor
-    # and a repainted box move neither.
-    SYSLOG_BYTES=$(stat -c %s "$OUT/installer-syslog.log" 2>/dev/null || echo 0)
+    # something: the serial log's size and the number of lines in it that name
+    # an actual install stage. A spinning cursor and a repainted box move
+    # neither. (The remote syslog is gone with the network: this VM has none.)
+    SERIAL_BYTES=$(stat -c %s "$OUT/serial-install.log" 2>/dev/null || echo 0)
     # `cat file 2>/dev/null` rather than `< file`: a missing file makes the
     # redirection itself fail, which prints "No such file or directory" to
     # the log and can abort the loop under set -e.
     STAGE_LINES=$( { cat "$OUT/serial-install.log" 2>/dev/null || true; } \
         | tr -d '\000' \
-        | grep -acE 'PRESEED-APPLIED|base-installer|Unpacking|Setting up|Selecting previously|Processing triggers|in-target|casperos-fixup|pkgsel|partman|Installing new version|Configuring ' || true)
+        | grep -acE 'PRESEED-APPLIED|base-installer|Unpacking|Setting up|Selecting previously|Processing triggers|in-target|casperos-fixup|pkgsel|partman|Installing new version|Configuring |dpkg-deb' || true)
     STAGE_LINES=${STAGE_LINES:-0}
-    CUR_PROGRESS="$SYSLOG_BYTES/$STAGE_LINES"
+    CUR_PROGRESS="$SERIAL_BYTES/$STAGE_LINES"
     if [ "$CUR_PROGRESS" = "$LAST_PROGRESS" ]; then
         IDLE=$((IDLE+30))
     else
@@ -124,8 +121,8 @@ while kill -0 "$QPID" 2>/dev/null; do
         printf '::notice::preseed was applied (%ss) — the installer is running unattended\n' "$WAITED"
     fi
     if [ "$PRESEED_SEEN" = 0 ] && [ "$WAITED" -ge 600 ] \
-        && [ "$SYSLOG_BYTES" -eq 0 ] && [ "$STAGE_LINES" -eq 0 ]; then
-        printf '::error::no sign of the preseed after %ss (no marker, no syslog, no install stage) — the boot params or the preseed path are wrong, not the install\n' "$WAITED" >&2
+        && [ "$SERIAL_BYTES" -eq 0 ] && [ "$STAGE_LINES" -eq 0 ]; then
+        printf '::error::no sign of the preseed after %ss (no marker, no install stage) — the boot params or the preseed path are wrong, not the install\n' "$WAITED" >&2
         ANSI_TAIL=$(tail -c 3000 "$OUT/serial-install.log" 2>/dev/null | tr -d '\000' \
             | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][AB0]//g' -e 's/\r//g' \
             | grep -av '^[[:space:]]*$' | tail -12 || true)
@@ -137,7 +134,7 @@ while kill -0 "$QPID" 2>/dev/null; do
     fi
 
     if [ "$WAITED" -ge 600 ] && [ $((WAITED % 300)) = 0 ]; then
-        echo "  ... install running (${WAITED}s); syslog=${SYSLOG_BYTES}B stage-lines=${STAGE_LINES} idle=${IDLE}s"
+        echo "  ... install running (${WAITED}s); serial=${SERIAL_BYTES}B stage-lines=${STAGE_LINES} idle=${IDLE}s"
     fi
 
     # 2. Real stall: no semantic progress for 20 minutes. The old threshold was
@@ -145,8 +142,8 @@ while kill -0 "$QPID" 2>/dev/null; do
     # what a stall detector should be.
     if [ "$IDLE" -ge 1200 ]; then
         echo "ERROR: installer stuck (no install progress for ${IDLE}s)"
-        printf '::error::installer made no progress for %ss (syslog %sB, %s stage lines)\n' \
-            "$IDLE" "$SYSLOG_BYTES" "$STAGE_LINES" >&2
+        printf '::error::installer made no progress for %ss (serial %sB, %s stage lines)\n' \
+            "$IDLE" "$SERIAL_BYTES" "$STAGE_LINES" >&2
         kill "$QPID" 2>/dev/null || true
         wait "$QPID" 2>/dev/null || true
         kill "$SYSLOG_PID" 2>/dev/null || true
@@ -315,7 +312,6 @@ chk() {
 V="$OUT/verify.log"
 B="$OUT/serial-boot.log"
 I="$OUT/serial-install.log"
-S="$OUT/installer-syslog.log"
 
 # The installed disk has to be mounted BEFORE any verdict reads from it.
 # `chk "$([ -e "$M/..." ])"` used to run with M still unset, and set -u turns
@@ -327,46 +323,43 @@ M="$OUT/mnt"
 
 chk "$(grep -q '### LOGIN PROMPT SHOWN' "$V" && echo 1 || echo 0)" "installed system boots to a login prompt"
 # d-i's `in-target` runs the fixup under log-output, which sends BOTH stdout
-# and stderr to syslog — the fixup's own lines never reach ttyS0. So look for
-# its sentinel file on the installed disk (authoritative, immune to log
-# routing) and fall back to the syslog, never to the serial log.
+# and stderr to syslog — the fixup's own lines never reach ttyS0. So the
+# sentinel file on the installed disk is the authoritative evidence (it is
+# immune to log routing AND survives a non-zero exit being swallowed).
 FIXUP_OK=0
 [ -f "$M/var/log/casperos-fixup.ok" ] && FIXUP_OK=1
-[ "$FIXUP_OK" = 0 ] && grep -aq 'casperos-fixup: fixup complete' "$S" 2>/dev/null && FIXUP_OK=1
 chk "$FIXUP_OK" "CasperOS fixup ran to completion at install time"
 if [ "$FIXUP_OK" = 0 ]; then
-    # the fixup is the part most likely to break; show what it said, from the
-    # log that actually carries its output
-    grep -aiE 'casperos-fixup|in-target|error|E: ' "$S" "$I" 2>/dev/null | tail -6 | \
-        while IFS= read -r l; do printf '::warning::fixup: %s\n' "${l:0:150}"; done
+    # Show what the installer was actually doing when it stopped; the serial
+    # log is the only channel here (there is no network for a syslog feed).
+    printf '::warning::no fixup sentinel on the installed disk\n'
+    tail -c 4000 "$I" 2>/dev/null | tr -d '\000' \
+        | sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' -e 's/\x1b[()][AB0]//g' -e 's/\r//g' \
+        | grep -av '^[[:space:]]*$' | tail -6 | \
+        while IFS= read -r l; do printf '::warning::serial: %s\n' "${l:0:150}"; done
 fi
 # "Rebooting into your new system" is a debconf template description, only
 # rendered by the frontend, so it is not a reliable marker under
-# DEBIAN_FRONTEND=text. The install finished iff d-i got as far as the fixup
-# or the reboot; use that, and the boot prompt in phase 2 is the real proof.
-chk "$( { grep -aqE 'Finished installation|Rebooting|fixup complete' "$I" "$S" 2>/dev/null \
-        || [ "$FIXUP_OK" = 1 ]; } && echo 1 || echo 0)" "install completed"
-# No login screen any more: greetd autologins into Hyprland. greetd's unit has
-# no WantedBy= — only Alias=display-manager.service — so `systemctl enable`
-# creates /etc/systemd/system/display-manager.service, never a
-# graphical.target.wants/greetd.service symlink. Assert the alias, which is
-# what actually happens.
-chk "$([ -e "$M/etc/systemd/system/display-manager.service" ] && echo 1 || echo 0)" "greetd enabled as display-manager"
+# DEBIAN_FRONTEND=text. The install finished iff the fixup completed; the boot
+# prompt in phase 2 is the real proof.
+chk "$([ "$FIXUP_OK" = 1 ] && echo 1 || echo 0)" "install completed"
+# GNOME via GDM. gdm3 ships Alias=display-manager.service, so `systemctl
+# enable gdm3` creates /etc/systemd/system/display-manager.service.
+chk "$([ -e "$M/etc/systemd/system/display-manager.service" ] && echo 1 || echo 0)" "gdm3 enabled as display-manager"
+chk "$([ -x "$M/usr/bin/gnome-shell" ] || [ -x "$M/usr/bin/gnome-session" ] && echo 1 || echo 0)" "GNOME session installed"
+chk "$([ -x "$M/usr/bin/ibus-daemon" ] && echo 1 || echo 0)" "ibus installed (on-screen keyboard)"
+chk "$(grep -q 'screen-keyboard-enabled=true' "$M/etc/dconf/db/local.d/00-casper-desktop" 2>/dev/null && echo 1 || echo 0)" "on-screen keyboard enabled"
+# The panel is physically portrait: mutter must rotate it, for lvy AND for
+# GDM's own home, or the login screen boots sideways.
+chk "$(grep -q '<rotation>right</rotation>' "$M/home/lvy/.config/monitors.xml" 2>/dev/null && echo 1 || echo 0)" "panel rotation for lvy"
+chk "$(grep -q '<rotation>right</rotation>' "$M/var/lib/gdm3/.config/monitors.xml" 2>/dev/null && echo 1 || echo 0)" "panel rotation for GDM"
+chk "$([ -f "$M/etc/gdm3/custom.conf" ] && echo 1 || echo 0)" "GDM config present"
 
 chk "$([ -f "$M/etc/libinput/local-overrides.quirks" ] && echo 1 || echo 0)" "libinput quirk present"
 chk "$(grep -q 'intel_idle.max_cstate=1' "$M/etc/default/grub.d/99-casper.cfg" 2>/dev/null && echo 1 || echo 0)" "GRUB kernel params baked"
 # the unquoted glob used to make this `[ -f a b ]` ("too many arguments")
 # whenever more than one vmlinuz-5.15* existed
 chk "$(ls "$M"/boot/vmlinuz-5.15* >/dev/null 2>&1 && echo 1 || echo 0)" "5.15 fallback kernel installed"
-# It used to assert the literal string 'exec Hyprland' in config.toml, which
-# was the *broken* guard: greetd prepends its own `exec `, so `exec command -v
-# Hyprland ...` failed with 127 on every boot. Assert the behaviour instead —
-# greetd must point at a runnable file, and that file must be able to start
-# Hyprland.
-chk "$(grep -q 'casper-session' "$M/etc/greetd/config.toml" 2>/dev/null && echo 1 || echo 0)" "greetd points at the session script"
-chk "$([ -x "$M/usr/local/bin/casper-session" ] && echo 1 || echo 0)" "session script is executable"
-chk "$(grep -qE '^[[:space:]]*(exec[[:space:]]+)?Hyprland[[:space:]]*$' "$M/usr/local/bin/casper-session" 2>/dev/null && echo 1 || echo 0)" "session script runs Hyprland"
-chk "$([ -f "$M/etc/xdg/hypr/hyprland.conf" ] && echo 1 || echo 0)" "Hyprland session config installed"
 chk "$(grep -q 'tmpfs /tmp' "$M/etc/fstab" 2>/dev/null && echo 1 || echo 0)" "tmpfs /tmp in fstab"
 chk "$(grep -q 'zram' "$M/etc/default/zramswap" 2>/dev/null && echo 1 || echo 0)" "zram config present"
 chk "$(grep -q 'lvy ALL=(ALL) NOPASSWD' "$M/etc/sudoers.d/90-casper-lvy" 2>/dev/null && echo 1 || echo 0)" "lvy sudo setup"

@@ -180,28 +180,29 @@ cat /proc/swaps
 echo ---THP
 cat /sys/kernel/mm/transparent_hugepage/enabled
 echo ---SESSION
-systemctl is-enabled greetd.service >/dev/null 2>&1 && echo GREETD_ENABLED
-# Short lines only: these travel over a serial login shell, and one long
-# one-liner with nested substitutions is what did not survive the trip.
-echo "SESSION_ACTIVE=$(systemctl is-active greetd.service 2>/dev/null)"
-echo "SESSION_SUB=$(systemctl show -p SubState --value greetd.service 2>/dev/null)"
+# GNOME is the session, launched by GDM. Short lines only: these travel over a
+# serial login shell, and one long one-liner with nested substitutions is what
+# did not survive the trip.
+systemctl is-enabled gdm3.service >/dev/null 2>&1 && echo GDM_ENABLED
+echo "SESSION_ACTIVE=$(systemctl is-active gdm3.service 2>/dev/null)"
+echo "SESSION_SUB=$(systemctl show -p SubState --value gdm3.service 2>/dev/null)"
 echo "SESSION_FAILED=$(systemctl --failed --no-legend --no-pager 2>/dev/null | head -2 | cut -d' ' -f1)"
-# greetd prepends a literal `exec ` to default_session command, so that value
-# must name an executable file, never a shell expression. An inline
-# "command -v Hyprland && exec Hyprland || exec bash" became
-# `exec command ...` -> 127 and greetd.service failed on every boot. Assert
-# both halves: the config points at the script, and the script is runnable.
-echo "SESSION_CMD=$(grep -E '^command' /etc/greetd/config.toml 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\" ')"
-[ -x /usr/local/bin/casper-session ] && echo SESSION_SCRIPT_OK || echo SESSION_SCRIPT_MISSING
-grep -q 'casper-session' /etc/greetd/config.toml 2>/dev/null && echo SESSION_WIRED || echo SESSION_NOT_WIRED
-journalctl -b -u greetd.service --no-pager --no-hostname 2>/dev/null | tail -10
-command -v Hyprland >/dev/null 2>&1 && echo HYPRLAND_PRESENT
-command -v qs >/dev/null 2>&1 && echo QS_PRESENT
-ls /usr/lib/x86_64-linux-gnu/qt6/qml/Caelestia/qmldir >/dev/null 2>&1 && echo CAELESTIA_OK
-ls /etc/xdg/quickshell/caelestia/shell.qml >/dev/null 2>&1 && echo CAELESTIA_SHELL_QML
-ls /etc/xdg/hypr/hyprland.conf >/dev/null 2>&1 && echo HYPR_CONF_OK
-cat /etc/casperos/hyprshell.status 2>/dev/null
-grep -q 'transform, 1' /etc/xdg/hypr/hyprland.conf && echo HYPR_ROTATE_OK
+echo "DM_ALIAS=$(systemctl is-enabled display-manager.service 2>/dev/null)"
+journalctl -b -u gdm3.service --no-pager --no-hostname 2>/dev/null | tail -10
+command -v gnome-shell >/dev/null 2>&1 && echo GNOME_SHELL_PRESENT || echo GNOME_SHELL_MISSING
+command -v gnome-session >/dev/null 2>&1 && echo GNOME_SESSION_PRESENT || echo GNOME_SESSION_MISSING
+command -v gnome-control-center >/dev/null 2>&1 && echo GNOME_CC_PRESENT || echo GNOME_CC_MISSING
+# The on-screen keyboard came back with GNOME (ibus). Without it a Wi-Fi
+# password cannot be typed on the tablet at all.
+command -v ibus-daemon >/dev/null 2>&1 && echo IBUS_PRESENT || echo IBUS_MISSING
+ls /usr/share/gnome-shell/extensions >/dev/null 2>&1 && echo GNOME_EXT_DIR_OK
+# Rotation: the panel is physically portrait, so mutter must rotate 90`. This
+# must exist for the user AND for GDM's own home, or the login screen is
+# sideways. Check all three copies.
+grep -q '<rotation>right</rotation>' /home/lvy/.config/monitors.xml 2>/dev/null && echo ROTATE_USER_OK || echo ROTATE_USER_MISSING
+grep -q '<rotation>right</rotation>' /var/lib/gdm3/.config/monitors.xml 2>/dev/null && echo ROTATE_GDM_OK || echo ROTATE_GDM_MISSING
+grep -q 'screen-keyboard-enabled=true' /etc/dconf/db/local.d/00-casper-desktop 2>/dev/null && echo OSK_ENABLED || echo OSK_NOT_SET
+cat /etc/dconf/db/local.d/10-casper-extensions 2>/dev/null
 echo ---PLYMOUTH
 grep -i theme /etc/plymouth/plymouthd.conf
 echo ---BOOTFILES
@@ -352,24 +353,21 @@ chks "$(grepq 'zram' "$s1")" "zram swap active"
 for svc in NetworkManager earlyoom zramswap casper-touchscreen-watchdog casper-cpu-governor; do
     chk "$(grepq "svc $svc = active" "$s1")" "service $svc active"
 done
-chks "$(grepq 'GREETD_ENABLED' "$s1")" "greetd enabled as the session launcher"
-# The session command has to be a runnable file, because greetd execs it with
-# a literal `exec ` prefix. Checking the config text as well as the file stops
-# the "inline conditional" bug from coming back unnoticed.
-chks "$(grepq 'SESSION_SCRIPT_OK' "$s1")" "greetd session script is executable"
-chks "$(grepq 'SESSION_WIRED' "$s1")" "greetd config points at the session script"
-chks "$(grepq 'HYPRLAND_PRESENT' "$s1")" "Hyprland installed"
-chks "$(grepq 'HYPR_CONF_OK' "$s1")" "system Hyprland config present"
-chks "$(grepq 'QS_PRESENT' "$s1")" "quickshell (qs) installed"
-chks "$(grepq 'CAELESTIA_OK' "$s1")" "Caelestia QML module installed"
-chks "$(grepq 'CAELESTIA_SHELL_QML' "$s1")" "Caelestia shell.qml installed"
-chks "$(grepq 'HYPR_ROTATE_OK' "$s1")" "landscape rotation set in the compositor"
+chks "$(grepq 'GDM_ENABLED' "$s1")" "gdm3 enabled as the display manager"
+chks "$(grepq 'DM_ALIAS=enabled' "$s1")" "display-manager.service alias points at gdm3"
+chks "$(grepq 'GNOME_SHELL_PRESENT' "$s1")" "gnome-shell installed"
+chks "$(grepq 'GNOME_SESSION_PRESENT' "$s1")" "gnome-session installed"
+chks "$(grepq 'GNOME_CC_PRESENT' "$s1")" "gnome-control-center installed"
+chks "$(grepq 'IBUS_PRESENT' "$s1")" "ibus installed (on-screen keyboard)"
+chks "$(grepq 'OSK_ENABLED' "$s1")" "on-screen keyboard enabled in dconf"
+chks "$(grepq 'ROTATE_USER_OK' "$s1")" "panel rotation set for lvy"
+chks "$(grepq 'ROTATE_GDM_OK' "$s1")" "panel rotation set for GDM (login screen)"
 chks "$(grepqi 'casper-splash' "$s1")" "plymouth theme = casper-splash"
-# The greeter/session launcher actually RUNNING is what QEMU can prove here.
-# A rendered desktop cannot: qemu's std-VGA gives Hyprland no usable DRM/GBM
-# device, so the framebuffer legitimately stays black - on the tablet it is
-# the i915 driver instead. The screenshot is reported, not asserted.
-chks "$(grepq 'SESSION_ACTIVE=active' "$s1")" "greetd session launcher active"
+# GDM actually RUNNING is what QEMU can prove. A rendered desktop cannot: qemu's
+# std-VGA gives GNOME no usable accelerated DRM/GBM device, so the framebuffer
+# legitimately stays black — on the tablet it is the i915 driver instead. The
+# screenshot is reported, not asserted.
+chks "$(grepq 'SESSION_ACTIVE=active' "$s1")" "gdm3 (display manager) active"
 chks "$(grepq 'PARTED_PRESENT' "$s1")" "parted present (first-boot root resize)"
 chks "$(grepq 'RESIZE2FS_PRESENT' "$s1")" "resize2fs present (first-boot root resize)"
 echo "  (screenshot: $(ppm_visible "$OUT/session-boot1.ppm" >/dev/null 2>&1 && echo content || echo black) — informational)"
@@ -385,7 +383,7 @@ chk "$(grepq 'BOOT_IMAGE=/boot/vmlinuz-5\.' "$j2")" "kernel 5.15.165 booted (jou
 chk "$(grepq 'i2c_designware.disable_pm=1' "$j2")" "legacy I2C params in cmdline (journal)"
 chk "$(grepq 'i2c_hid.use_polling_mode=1' "$j2")" "polling mode param in cmdline (journal)"
 chk "$(grepq 'intel_idle.max_cstate=1' "$j2")" "common params still applied (journal)"
-chk "$(grepq 'greetd' "$j2")" "greetd started (journal)"
+chk "$(grepq 'gdm3|gnome-shell|GDM' "$j2")" "gdm3 started (journal)"
 echo "  (boot2 screenshot: $(ppm_visible "$OUT/session-boot2.ppm" >/dev/null 2>&1 && echo content || echo black) — informational: qemu stdvga + llvmpipe differs from the real i915 path)"
 
 echo ""
@@ -405,15 +403,15 @@ if [ "$fail" -gt 0 ]; then
     done
     # the serial session is the most reliable source: the journal is volatile
     # in the guest, so journal-boot1.txt is often empty
-    # greetd is the session launcher: if it is not active there is no desktop,
+    # gdm3 is the display manager: if it is not active there is no desktop,
     # so its unit state and journal are the first thing to show
-    for pat in 'SESSION_ACTIVE=|SESSION_SUB=|SESSION_FAILED=' 'greetd\[|greetd\.service' 'pam|PAM' 'cannot open|failed|denied'; do
+    for pat in 'SESSION_ACTIVE=|SESSION_SUB=|SESSION_FAILED=' 'gdm3\[|gdm3\.service' 'pam|PAM' 'cannot open|failed|denied'; do
         line=$(grep -aiE "$pat" "$OUT/serial-boot1.log" 2>/dev/null | tail -1)
         if [ -n "$line" ]; then
             printf '::warning::boot1 serial [%s]: %s\n' "$pat" "${line:0:150}"
         fi
     done
-    for pat in 'FAILED|failed to' 'timed out|timeout' 'greetd|Hyprland|hyprland' 'growpart|casper-growroot' 'dependency|not found'; do
+    for pat in 'FAILED|failed to' 'timed out|timeout' 'gdm3|gnome-shell|mutter' 'growpart|casper-growroot' 'dependency|not found'; do
         line=$(grep -aiE "$pat" "$OUT/journal-boot1.txt" 2>/dev/null | tail -1)
         if [ -n "$line" ]; then
             printf '::warning::journal-boot1 [%s]: %s\n' "$pat" "${line:0:150}"
